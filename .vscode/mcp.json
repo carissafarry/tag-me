@@ -1,0 +1,24 @@
+{
+  "servers": {
+    "my-mcp-server1": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["mcp-remote", "https://mcp.linear.app/mcp"]
+    },
+    "oraios/serena": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": [
+        "--from",
+        "git+https://github.com/oraios/serena",
+        "serena",
+        "start-mcp-server",
+        "--context",
+        "ide",
+        "--project",
+        "${workspaceFolder}"
+      ]
+    }
+  },
+  "inputs": []
+}
