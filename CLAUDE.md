@@ -107,3 +107,38 @@ When available:
 - use Linear MCP for issue retrieval and task context
 - use GitHub MCP for PR/issue/repo context
 - use Serena for repository inspection and targeted code navigation
+
+## Tool Selection Rules
+- Use Serena first for any code implementation, debugging, refactor, or test-related task.
+- Do not use Serena for documentation-only or Linear issue creation tasks.
+- Use superpowers:brainstorming only when the solution approach is unclear.
+- Use superpowers:writing-plans after issue scope is clear and Serena inspection is done.
+- Use superpowers:executing-plans only after a written plan exists or has been approved.
+- Prefer separate phases:
+  1. inspect with Serena
+  2. write plan
+  3. execute plan
+  4. ship
+
+## Serena Usage Rules
+- For any implementation task, use Serena first to inspect the relevant codebase areas.
+- Do not rely only on generic file reads when Serena is available.
+- Before planning or coding, identify:
+  - relevant files
+  - relevant symbols/functions
+  - existing patterns to follow
+- Mention explicitly which files/modules were identified through Serena.
+- Skip Serena only for non-code tasks such as:
+  - Linear backlog creation
+  - PRD rewriting
+  - issue writing
+  - documentation-only tasks
+
+## Fixed Stack Rules
+- apps/web uses Next.js
+- apps/api uses Golang
+- apps/worker uses Node.js
+- PostgreSQL is the primary database
+- Redis is used for cache, queue, session, and rate-limit support
+- Do not propose alternative stacks unless explicitly asked
+- Do not redesign the stack during issue execution

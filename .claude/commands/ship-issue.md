@@ -20,3 +20,9 @@ Instructions:
    - PR title
    - PR summary
    - PR URL if created
+
+Use the repository conventions:
+- branch name must include Issue ID
+- commit message must start with Issue ID
+- PR title must start with Issue ID
+- PR body must follow the repository PR template

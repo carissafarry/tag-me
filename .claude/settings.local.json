@@ -2,5 +2,10 @@
   "enableAllProjectMcpServers": true,
   "enabledPlugins": {
     "superpowers@claude-plugins-official": true
+  },
+  "permissions": {
+    "allow": [
+      "mcp__serena__list_dir"
+    ]
   }
 }

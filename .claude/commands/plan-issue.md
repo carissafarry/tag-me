@@ -1,26 +1,22 @@
-Plan work for a Linear issue with minimal scope.
+Create a minimal implementation plan for a Linear issue.
 
 Arguments:
 - Issue ID or issue title
 
 Instructions:
 1. Use the Linear MCP to retrieve the issue
-2. Summarize:
-   - problem
-   - scope
-   - acceptance criteria
-   - risks
-3. Inspect only the repository files relevant to the issue
-4. Produce:
+2. Do not restate the full issue description
+3. Inspect only the minimal relevant files or folders
+4. Return only:
    - relevant files/modules
-   - implementation plan
-   - test plan
-   - open questions
-5. Do not implement yet
+   - 3 to 5 implementation steps
+   - minimal test targets
+   - blockers or missing prerequisites
+5. Keep the answer concise
+6. Do not implement yet
 
 Output format:
-- Issue summary
 - Relevant files
-- Implementation plan
-- Test plan
-- Open questions
+- Implementation steps
+- Minimal test targets
+- Blockers
