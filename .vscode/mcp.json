@@ -1,13 +1,12 @@
 {
   "servers": {
-    "my-mcp-server1": {
-      "type": "stdio",
-      "command": "npx",
-      "args": ["mcp-remote", "https://mcp.linear.app/mcp"]
+    "linear": {
+      "type": "http",
+      "url": "https://mcp.linear.app/mcp"
     },
     "oraios/serena": {
       "type": "stdio",
-      "command": "uvx",
+      "command": "/Users/carissafarry/.local/bin/uvx",
       "args": [
         "--from",
         "git+https://github.com/oraios/serena",
