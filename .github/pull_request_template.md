@@ -2,7 +2,8 @@
 <!-- What changed and why? -->
 
 ## Linear Issue
-<!-- Example: TAG-123 -->
+- Issue ID: <!-- example: TAG-7 -->
+- Issue URL: <!-- example: https://linear.app/tag-me/issue/TAG-7 -->
 
 ## Acceptance Criteria Covered
 - [ ] AC1

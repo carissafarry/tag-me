@@ -2,3 +2,13 @@
 
 api-dev:
 	cd apps/api && air
+
+api-test:
+	cd apps/api && go test ./... -coverpkg=./...
+
+api-coverage:
+	cd apps/api && go test ./... -coverpkg=./... -coverprofile=coverage.out
+	cd apps/api && go tool cover -func=coverage.out
+
+pr-gate:
+	./scripts/pr_gate.sh 70
