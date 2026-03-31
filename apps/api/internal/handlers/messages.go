@@ -41,6 +41,12 @@ func (h *MessageHandler) CreateMessage(c *gin.Context) {
 	sessionIDStr := sessionID.(string)
 	ipAddressStr := ipAddress.(string)
 
+	// Convert empty IP to nil (database INET type doesn't accept empty strings)
+	var ipAddressPtr *string
+	if ipAddressStr != "" {
+		ipAddressPtr = &ipAddressStr
+	}
+
 	// Resolve QR token to owner and object context
 	qrCode, err := h.service.ResolveQRToken(c.Request.Context(), req.QRToken)
 	if err != nil {
@@ -73,7 +79,7 @@ func (h *MessageHandler) CreateMessage(c *gin.Context) {
 		req.LocationLongitude,
 		req.LocationText,
 		&sessionIDStr,
-		&ipAddressStr,
+		ipAddressPtr,
 	)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
