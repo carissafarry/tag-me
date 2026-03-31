@@ -64,7 +64,7 @@ Format:
 ## Pull Request Rules
 PR description must include:
 - summary
-- linked Linear issue
+- linked Linear issue (the URL)
 - acceptance criteria covered
 - tests added/updated
 - risks or follow-ups
@@ -142,3 +142,34 @@ When available:
 - Redis is used for cache, queue, session, and rate-limit support
 - Do not propose alternative stacks unless explicitly asked
 - Do not redesign the stack during issue execution
+
+## PR Coverage Gate Rules
+- Before opening any PR for an API issue, always run the local PR gate script:
+  - `./scripts/pr_gate.sh 70`
+- The PR gate must run real tests, not estimated coverage.
+- If coverage is >= 70:
+  - PR creation is allowed
+  - the PR summary must include the real coverage number
+  - the PR summary must also note that some edge cases may remain for follow-up
+- If coverage is < 70:
+  - do not create a PR
+  - commits are allowed
+  - report the real coverage value and recommend what to improve
+- If tests fail:
+  - do not create a PR
+  - do not claim coverage passed
+- Never skip the coverage gate for API issues unless explicitly instructed by the user
+
+
+## Linear URL Rules
+- The Linear team slug is `tag-me`
+- The canonical Linear issue URL format is:
+  - `https://linear.app/tag-me/issue/<ISSUE_ID>`
+- Example:
+  - `TAG-7` -> `https://linear.app/tag-me/issue/TAG-7`
+- When an issue ID is known, always derive and include the canonical Linear issue URL
+- Use the Linear issue ID and URL as the source of truth for:
+  - planning
+  - commit grouping
+  - PR preparation
+  - PR body

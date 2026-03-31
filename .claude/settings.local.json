@@ -1,11 +1,18 @@
 {
+  "permissions": {
+    "allow": [
+      "mcp__serena__list_dir",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "mcp__serena__get_symbols_overview",
+      "Bash(make test:*)",
+      "Bash(go test:*)",
+      "Bash(go build:*)",
+      "Bash(go fmt:*)"
+    ]
+  },
   "enableAllProjectMcpServers": true,
   "enabledPlugins": {
     "superpowers@claude-plugins-official": true
-  },
-  "permissions": {
-    "allow": [
-      "mcp__serena__list_dir"
-    ]
   }
 }
