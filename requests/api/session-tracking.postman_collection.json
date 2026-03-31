@@ -1,0 +1,50 @@
+{
+  "info": {
+    "name": "Tag Me - API Session Tracking",
+    "description": "POST /messages request that exercises SessionTracking middleware by sending X-Forwarded-For and X-Session-ID headers.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Create Message With Session Tracking",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "X-Forwarded-For",
+            "value": "203.0.113.5"
+          },
+          {
+            "key": "X-Session-ID",
+            "value": "custom-session-123"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"qr_token\": \"valid-qr-token-here\",\n  \"message_type\": \"text\",\n  \"content\": \"Message with session tracking\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/messages",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "messages"
+          ]
+        },
+        "description": "Verifies SessionTracking stores ip_address and session_id in Gin context, returns X-Session-ID in the response header, and allows downstream handlers to read the values."
+      },
+      "response": []
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080"
+    }
+  ]
+}

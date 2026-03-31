@@ -1,0 +1,13 @@
+@baseUrl = http://localhost:8080
+
+### Create message with session tracking
+POST {{baseUrl}}/messages
+Content-Type: application/json
+X-Forwarded-For: 203.0.113.5
+X-Session-ID: custom-session-123
+
+{
+  "qr_token": "valid-qr-token-here",
+  "message_type": "text",
+  "content": "Message with session tracking"
+}

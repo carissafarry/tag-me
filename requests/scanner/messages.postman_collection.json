@@ -1,0 +1,391 @@
+{
+  "info": {
+    "name": "Tag Me - Scanner Messages API (TAG-7)",
+    "description": "POST /messages endpoint for anonymous scanner feedback collection. Creates conversation and initial message record with privacy-by-design response serialization.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Health Check",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/health",
+          "host": ["{{baseUrl}}"],
+          "path": ["health"]
+        },
+        "description": "Verify API is running and database connection is healthy"
+      },
+      "response": []
+    },
+    {
+      "name": "Happy Path - All Fields",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"qr_token\": \"demo-token-123\",\n  \"message_type\": \"photo\",\n  \"content\": \"Found item at location\",\n  \"location_latitude\": 37.7749,\n  \"location_longitude\": -122.4194\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/messages",
+          "host": ["{{baseUrl}}"],
+          "path": ["messages"]
+        },
+        "description": "Create message with all optional fields. Expected: 201 Created with conversation_id, message_id, status='active', created_at"
+      },
+      "response": []
+    },
+    {
+      "name": "Happy Path - Minimal Fields",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"qr_token\": \"demo-token-123\",\n  \"message_type\": \"text\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/messages",
+          "host": ["{{baseUrl}}"],
+          "path": ["messages"]
+        },
+        "description": "Create message with only required fields. Expected: 201 Created with conversation_id, message_id, status='active', created_at"
+      },
+      "response": []
+    },
+    {
+      "name": "Happy Path - With Content Only",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"qr_token\": \"demo-token-123\",\n  \"message_type\": \"text\",\n  \"content\": \"This is a text message from the scanner\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/messages",
+          "host": ["{{baseUrl}}"],
+          "path": ["messages"]
+        },
+        "description": "Create message with content but no location. Expected: 201 Created"
+      },
+      "response": []
+    },
+    {
+      "name": "Happy Path - With Location Only",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"qr_token\": \"demo-token-123\",\n  \"message_type\": \"photo\",\n  \"location_latitude\": 40.7128,\n  \"location_longitude\": -74.0060\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/messages",
+          "host": ["{{baseUrl}}"],
+          "path": ["messages"]
+        },
+        "description": "Create message with location but no content. Expected: 201 Created"
+      },
+      "response": []
+    },
+    {
+      "name": "Happy Path - With Session Tracking",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "X-Forwarded-For",
+            "value": "203.0.113.5"
+          },
+          {
+            "key": "X-Session-ID",
+            "value": "scanner-session-abc123"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"qr_token\": \"demo-token-123\",\n  \"message_type\": \"text\",\n  \"content\": \"Message with session tracking\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/messages",
+          "host": ["{{baseUrl}}"],
+          "path": ["messages"]
+        },
+        "description": "Create message with session tracking headers. Expected: 201 Created, X-Session-ID returned in response header, session metadata stored for rate-limiting"
+      },
+      "response": []
+    },
+    {
+      "name": "Error - Missing qr_token",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"message_type\": \"text\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/messages",
+          "host": ["{{baseUrl}}"],
+          "path": ["messages"]
+        },
+        "description": "Required field qr_token is missing. Expected: 400 Bad Request with code='validation_error'"
+      },
+      "response": []
+    },
+    {
+      "name": "Error - Missing message_type",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"qr_token\": \"test-token\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/messages",
+          "host": ["{{baseUrl}}"],
+          "path": ["messages"]
+        },
+        "description": "Required field message_type is missing. Expected: 400 Bad Request with code='validation_error'"
+      },
+      "response": []
+    },
+    {
+      "name": "Error - Invalid QR Token",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"qr_token\": \"nonexistent-token-xyz-invalid\",\n  \"message_type\": \"text\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/messages",
+          "host": ["{{baseUrl}}"],
+          "path": ["messages"]
+        },
+        "description": "QR token does not exist in database. Expected: 401 Unauthorized with code='invalid_qr_token', generic error message (no enumeration)"
+      },
+      "response": []
+    },
+    {
+      "name": "Error - Inactive QR Token",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"qr_token\": \"test-inactive-token\",\n  \"message_type\": \"text\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/messages",
+          "host": ["{{baseUrl}}"],
+          "path": ["messages"]
+        },
+        "description": "QR token exists but is marked inactive (is_active=false). Expected: 401 Unauthorized with code='invalid_qr_token' (same error as nonexistent)"
+      },
+      "response": []
+    },
+    {
+      "name": "Error - Malformed JSON",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"qr_token\": \"token\",\n  \"message_type\": \"text\",\n  invalid json\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/messages",
+          "host": ["{{baseUrl}}"],
+          "path": ["messages"]
+        },
+        "description": "Request body is not valid JSON. Expected: 400 Bad Request with code='validation_error'"
+      },
+      "response": []
+    },
+    {
+      "name": "Edge Case - Empty String Values",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"qr_token\": \"\",\n  \"message_type\": \"\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/messages",
+          "host": ["{{baseUrl}}"],
+          "path": ["messages"]
+        },
+        "description": "Required fields are present but empty strings. Expected: 401 Unauthorized with code='invalid_qr_token' (empty token treated as invalid)"
+      },
+      "response": []
+    },
+    {
+      "name": "Edge Case - Very Long Content",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"qr_token\": \"demo-token-123\",\n  \"message_type\": \"text\",\n  \"content\": \"This is a very long message that contains a lot of text to test how the API handles larger payloads. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/messages",
+          "host": ["{{baseUrl}}"],
+          "path": ["messages"]
+        },
+        "description": "Content field contains very long text (TEXT column in PostgreSQL supports large payloads). Expected: 201 Created"
+      },
+      "response": []
+    },
+    {
+      "name": "Edge Case - Invalid Latitude",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"qr_token\": \"demo-token-123\",\n  \"message_type\": \"photo\",\n  \"location_latitude\": 91.0,\n  \"location_longitude\": -122.4194\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/messages",
+          "host": ["{{baseUrl}}"],
+          "path": ["messages"]
+        },
+        "description": "Latitude is out of valid range [-90, 90]. API accepts the value; validation is downstream responsibility. Expected: 201 Created (data stored as provided)"
+      },
+      "response": []
+    },
+    {
+      "name": "Edge Case - Negative Location Values",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"qr_token\": \"demo-token-123\",\n  \"message_type\": \"photo\",\n  \"location_latitude\": -33.8688,\n  \"location_longitude\": 151.2093\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/messages",
+          "host": ["{{baseUrl}}"],
+          "path": ["messages"]
+        },
+        "description": "Valid location in southern hemisphere. Expected: 201 Created"
+      },
+      "response": []
+    },
+    {
+      "name": "Privacy Test - Response Never Exposes Owner Data",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "X-Forwarded-For",
+            "value": "203.0.113.5"
+          },
+          {
+            "key": "X-Session-ID",
+            "value": "test-session-123"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"qr_token\": \"demo-token-123\",\n  \"message_type\": \"text\",\n  \"content\": \"Test message\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/messages",
+          "host": ["{{baseUrl}}"],
+          "path": ["messages"]
+        },
+        "description": "Response body should ONLY contain: conversation_id, message_id, status, created_at. MUST NOT contain: owner_id, owner_contact, session_id, ip_address. Verify response does not leak sensitive data."
+      },
+      "response": []
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080",
+      "type": "string"
+    }
+  ]
+}

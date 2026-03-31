@@ -1,0 +1,123 @@
+@baseUrl = http://localhost:8080
+
+### Health check
+GET {{baseUrl}}/health
+
+### Happy path: Create message with all fields
+POST {{baseUrl}}/messages
+Content-Type: application/json
+
+{
+  "qr_token": "valid-qr-token-here",
+  "message_type": "photo",
+  "content": "Scanner feedback message",
+  "location_latitude": 37.7749,
+  "location_longitude": -122.4194
+}
+
+### Happy path: Create message with minimal fields
+POST {{baseUrl}}/messages
+Content-Type: application/json
+
+{
+  "qr_token": "valid-qr-token-here",
+  "message_type": "text"
+}
+
+### Happy path: Create message with optional content
+POST {{baseUrl}}/messages
+Content-Type: application/json
+
+{
+  "qr_token": "valid-qr-token-here",
+  "message_type": "text",
+  "content": "This is a text message from the scanner"
+}
+
+### Happy path: Create message with location only
+POST {{baseUrl}}/messages
+Content-Type: application/json
+
+{
+  "qr_token": "valid-qr-token-here",
+  "message_type": "photo",
+  "location_latitude": 40.7128,
+  "location_longitude": -74.0060
+}
+
+### Happy path: With session tracking headers
+POST {{baseUrl}}/messages
+Content-Type: application/json
+X-Forwarded-For: 203.0.113.5
+X-Session-ID: scanner-session-abc123
+
+{
+  "qr_token": "valid-qr-token-here",
+  "message_type": "text",
+  "content": "Message with session tracking"
+}
+
+### Error: Missing required qr_token
+POST {{baseUrl}}/messages
+Content-Type: application/json
+
+{
+  "message_type": "text"
+}
+
+### Error: Missing required message_type
+POST {{baseUrl}}/messages
+Content-Type: application/json
+
+{
+  "qr_token": "some-token"
+}
+
+### Error: Invalid/nonexistent qr_token
+POST {{baseUrl}}/messages
+Content-Type: application/json
+
+{
+  "qr_token": "nonexistent-qr-token-xyz",
+  "message_type": "text"
+}
+
+### Error: Malformed JSON
+POST {{baseUrl}}/messages
+Content-Type: application/json
+
+{
+  "qr_token": "token",
+  "message_type": "text",
+  invalid json here
+}
+
+### Error: Invalid latitude/longitude (out of bounds)
+POST {{baseUrl}}/messages
+Content-Type: application/json
+
+{
+  "qr_token": "valid-qr-token-here",
+  "message_type": "photo",
+  "location_latitude": 91.0,
+  "location_longitude": -122.4194
+}
+
+### Edge case: Empty string values
+POST {{baseUrl}}/messages
+Content-Type: application/json
+
+{
+  "qr_token": "",
+  "message_type": ""
+}
+
+### Edge case: Very long content
+POST {{baseUrl}}/messages
+Content-Type: application/json
+
+{
+  "qr_token": "valid-qr-token-here",
+  "message_type": "text",
+  "content": "This is a very long message that contains a lot of text to test how the API handles larger payloads. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat."
+}
