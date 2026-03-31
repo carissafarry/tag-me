@@ -19,9 +19,9 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
-// TestSetup creates a test database connection and cleans up tables
-func TestSetup(t *testing.T) *pgxpool.Pool {
-	dbURL := "postgres://postgres:password@localhost:5432/tag_me_test"
+// setupTestDB creates a test database connection and cleans up tables
+func setupTestDB(t *testing.T) *pgxpool.Pool {
+	dbURL := "postgres://postgres:rahasia@localhost:5432/tag_me_test"
 	db, err := pgxpool.New(context.Background(), dbURL)
 	if err != nil {
 		t.Fatalf("Failed to connect to test database: %v", err)
@@ -48,7 +48,7 @@ func TestSetup(t *testing.T) *pgxpool.Pool {
 		id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 		qr_code_id UUID NOT NULL,
 		owner_id UUID NOT NULL,
-		status VARCHAR(50) NOT NULL DEFAULT 'active',
+		status VARCHAR(50) NOT NULL DEFAULT 'PENDING',
 		created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT date_trunc('second', NOW() AT TIME ZONE 'Asia/Jakarta'),
 		updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT date_trunc('second', NOW() AT TIME ZONE 'Asia/Jakarta')
 	);
@@ -56,10 +56,12 @@ func TestSetup(t *testing.T) *pgxpool.Pool {
 	CREATE TABLE messages (
 		id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 		conversation_id UUID NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+		sender_type VARCHAR(50) NOT NULL DEFAULT 'SCANNER',
 		message_type VARCHAR(100) NOT NULL,
 		content TEXT,
 		location_latitude DECIMAL(10, 8),
 		location_longitude DECIMAL(11, 8),
+		location_text TEXT,
 		session_id VARCHAR(255),
 		ip_address INET,
 		created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT date_trunc('second', NOW() AT TIME ZONE 'Asia/Jakarta')
@@ -76,7 +78,7 @@ func TestSetup(t *testing.T) *pgxpool.Pool {
 
 // TestPayloadValidation: AC1 - POST /messages accepts documented payload shape
 func TestPayloadValidation(t *testing.T) {
-	db := TestSetup(t)
+	db := setupTestDB(t)
 	defer db.Close()
 
 	service := services.NewMessageService(db)
@@ -154,9 +156,9 @@ func TestPayloadValidation(t *testing.T) {
 	}
 }
 
-// TestQRTokenResolution: AC3 - Invalid QR token returns safe error response
+// TestQRTokenResolution: AC3 - Invalid QR token returns safe error response (service layer)
 func TestQRTokenResolution(t *testing.T) {
-	db := TestSetup(t)
+	db := setupTestDB(t)
 	defer db.Close()
 
 	service := services.NewMessageService(db)
@@ -195,9 +197,77 @@ func TestQRTokenResolution(t *testing.T) {
 	}
 }
 
+// TestInvalidQRTokenHTTPResponse: AC3 - HTTP endpoint validates qr_token with proper error response
+func TestInvalidQRTokenHTTPResponse(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	service := services.NewMessageService(db)
+	handler := handlers.NewMessageHandler(service)
+
+	router := gin.New()
+	router.Use(middleware.SessionTracking())
+	router.POST("/messages", handler.CreateMessage)
+
+	tests := []struct {
+		name           string
+		qrToken        string
+		expectedStatus int
+		expectedCode   string
+	}{
+		{
+			name:           "nonexistent token",
+			qrToken:        "nonexistent-token",
+			expectedStatus: http.StatusUnauthorized,
+			expectedCode:   "invalid_qr_token",
+		},
+		{
+			name:           "empty token",
+			qrToken:        "",
+			expectedStatus: http.StatusBadRequest,
+			expectedCode:   "validation_error",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			payload := map[string]interface{}{
+				"qr_token":     tt.qrToken,
+				"message_type": "text",
+			}
+
+			payloadBytes, _ := json.Marshal(payload)
+			req, _ := http.NewRequest("POST", "/messages", strings.NewReader(string(payloadBytes)))
+			req.Header.Set("Content-Type", "application/json")
+
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+
+			if w.Code != tt.expectedStatus {
+				t.Errorf("expected status %d, got %d", tt.expectedStatus, w.Code)
+			}
+
+			var resp models.ErrorResponse
+			err := json.Unmarshal(w.Body.Bytes(), &resp)
+			if err != nil {
+				t.Fatalf("failed to parse response: %v", err)
+			}
+
+			if resp.Code != tt.expectedCode {
+				t.Errorf("expected code %s, got %s", tt.expectedCode, resp.Code)
+			}
+
+			// Verify safe error message (doesn't leak token info)
+			if resp.Error == "" {
+				t.Error("error message should not be empty")
+			}
+		})
+	}
+}
+
 // TestConversationAndMessageCreation: AC2 - Valid request creates conversation and message
 func TestConversationAndMessageCreation(t *testing.T) {
-	db := TestSetup(t)
+	db := setupTestDB(t)
 	defer db.Close()
 
 	// Create test QR code
@@ -230,8 +300,8 @@ func TestConversationAndMessageCreation(t *testing.T) {
 	if conversation.ID == uuid.Nil {
 		t.Error("conversation ID is nil")
 	}
-	if conversation.Status != "active" {
-		t.Errorf("expected status 'active', got %s", conversation.Status)
+	if conversation.Status != "PENDING" {
+		t.Errorf("expected status 'PENDING', got %s", conversation.Status)
 	}
 	if conversation.OwnerID != ownerID {
 		t.Errorf("expected owner_id %s, got %s", ownerID, conversation.OwnerID)
@@ -243,7 +313,7 @@ func TestConversationAndMessageCreation(t *testing.T) {
 	lon := -122.4194
 	locationText := "Test Location"
 	sessionID := "session-123"
-	ipAddr := "192.168.1.1"
+	ipAddr := "192.168.1.1" // Valid INET format
 
 	message, err := service.CreateMessage(
 		context.Background(),
@@ -273,7 +343,7 @@ func TestConversationAndMessageCreation(t *testing.T) {
 
 // TestResponseSerialization: AC6 - Response never exposes owner contact data
 func TestResponseSerialization(t *testing.T) {
-	db := TestSetup(t)
+	db := setupTestDB(t)
 	defer db.Close()
 
 	// Create test QR code
@@ -305,6 +375,7 @@ func TestResponseSerialization(t *testing.T) {
 	payloadBytes, _ := json.Marshal(payload)
 	req, _ := http.NewRequest("POST", "/messages", strings.NewReader(string(payloadBytes)))
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Forwarded-For", "127.0.0.1")
 
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
@@ -326,32 +397,53 @@ func TestResponseSerialization(t *testing.T) {
 	if resp.MessageID == "" {
 		t.Error("response missing message_id")
 	}
-	if resp.Status != "active" {
-		t.Errorf("expected status 'active', got %s", resp.Status)
+	if resp.Status != "PENDING" {
+		t.Errorf("expected status 'PENDING', got %s", resp.Status)
 	}
 	if resp.CreatedAt == "" {
 		t.Error("response missing created_at")
 	}
 
-	// Verify response DOES NOT contain owner data
+	// Verify response structure: exactly 4 fields, no sensitive data
+	respMap := make(map[string]interface{})
+	err = json.Unmarshal(w.Body.Bytes(), &respMap)
+	if err != nil {
+		t.Fatalf("response is not valid JSON: %v", err)
+	}
+
+	// Count fields - should be exactly conversation_id, message_id, status, created_at
+	expectedFields := map[string]bool{
+		"conversation_id": true,
+		"message_id":      true,
+		"status":          true,
+		"created_at":      true,
+	}
+
+	for field := range respMap {
+		if !expectedFields[field] {
+			t.Errorf("response contains unexpected field: %s", field)
+		}
+	}
+
+	for field := range expectedFields {
+		if _, ok := respMap[field]; !ok {
+			t.Errorf("response missing expected field: %s", field)
+		}
+	}
+
+	// Verify sensitive fields are absent
+	sensitiveFields := []string{"owner_id", "owner", "session_id", "session", "ip_address", "ip"}
 	respBody := w.Body.String()
-	if strings.Contains(respBody, ownerID.String()) {
-		t.Error("response should not contain owner_id")
-	}
-	if strings.Contains(respBody, "owner") {
-		t.Error("response should not contain owner data")
-	}
-	if strings.Contains(respBody, "session") {
-		t.Error("response should not contain session data")
-	}
-	if strings.Contains(respBody, "ip") {
-		t.Error("response should not contain IP address")
+	for _, field := range sensitiveFields {
+		if strings.Contains(respBody, field) {
+			t.Errorf("response should not contain sensitive field: %s", field)
+		}
 	}
 }
 
 // TestSessionMetadataCapture: AC5 - Request metadata for session/rate-limit logic is captured
 func TestSessionMetadataCapture(t *testing.T) {
-	db := TestSetup(t)
+	db := setupTestDB(t)
 	defer db.Close()
 
 	// Create test QR code
@@ -405,23 +497,29 @@ func TestSessionMetadataCapture(t *testing.T) {
 	var storedSessionID *string
 	var storedIP *string
 	err = db.QueryRow(context.Background(), `
-		SELECT session_id, ip_address::text FROM messages WHERE id = $1
+		SELECT session_id, host(ip_address) FROM messages WHERE id = $1
 	`, resp.MessageID).Scan(&storedSessionID, &storedIP)
 	if err != nil {
 		t.Fatalf("Failed to query message: %v", err)
 	}
 
-	if storedSessionID == nil || *storedSessionID == "" {
-		t.Error("session_id was not stored")
+	// Session ID should match the header value provided
+	if storedSessionID == nil {
+		t.Error("session_id should not be null")
+	} else if *storedSessionID != "custom-session-123" {
+		t.Errorf("expected session_id 'custom-session-123', got %s", *storedSessionID)
 	}
-	if storedIP == nil || *storedIP == "" {
-		t.Error("ip_address was not stored")
+	// IP should be the one from X-Forwarded-For header
+	if storedIP == nil {
+		t.Error("ip_address should not be null")
+	} else if *storedIP != "203.0.113.5" {
+		t.Errorf("expected ip_address '203.0.113.5', got %s", *storedIP)
 	}
 }
 
 // TestInactiveQRToken: Edge case - inactive QR token
 func TestInactiveQRToken(t *testing.T) {
-	db := TestSetup(t)
+	db := setupTestDB(t)
 	defer db.Close()
 
 	ownerID := uuid.New()
@@ -447,7 +545,7 @@ func TestInactiveQRToken(t *testing.T) {
 
 // TestEdgeCaseMissingLocation: Location fields are optional
 func TestEdgeCaseMissingLocation(t *testing.T) {
-	db := TestSetup(t)
+	db := setupTestDB(t)
 	defer db.Close()
 
 	ownerID := uuid.New()
@@ -478,6 +576,7 @@ func TestEdgeCaseMissingLocation(t *testing.T) {
 	payloadBytes, _ := json.Marshal(payload)
 	req, _ := http.NewRequest("POST", "/messages", strings.NewReader(string(payloadBytes)))
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Forwarded-For", "127.0.0.1")
 
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
@@ -487,7 +586,10 @@ func TestEdgeCaseMissingLocation(t *testing.T) {
 	}
 
 	var resp models.CreateMessageResponse
-	json.Unmarshal(w.Body.Bytes(), &resp)
+	err = json.Unmarshal(w.Body.Bytes(), &resp)
+	if err != nil {
+		t.Fatalf("Failed to parse response: %v", err)
+	}
 
 	// Verify message exists but has null location
 	var msg models.Message
@@ -502,5 +604,131 @@ func TestEdgeCaseMissingLocation(t *testing.T) {
 
 	if msg.LocationLatitude != nil || msg.LocationLongitude != nil {
 		t.Error("location fields should be null when not provided")
+	}
+}
+
+// TestHandlerErrorResponseForCreateConversation: Handler returns 500 when conversation creation fails
+func TestHandlerErrorResponseForCreateConversation(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	// Create test QR code
+	ownerID := uuid.New()
+	qrCodeID := uuid.New()
+	qrToken := "test-token-" + uuid.New().String()
+
+	_, err := db.Exec(context.Background(), `
+		INSERT INTO qr_codes (id, owner_id, qr_token, object_type, object_id, is_active)
+		VALUES ($1, $2, $3, $4, $5, true)
+	`, qrCodeID, ownerID, qrToken, "link", uuid.New())
+	if err != nil {
+		t.Fatalf("Failed to insert test QR code: %v", err)
+	}
+
+	service := services.NewMessageService(db)
+	handler := handlers.NewMessageHandler(service)
+
+	router := gin.New()
+	router.Use(middleware.SessionTracking())
+	router.POST("/messages", handler.CreateMessage)
+
+	// Now drop conversations table to force DB error on insert
+	_, err = db.Exec(context.Background(), "DROP TABLE IF EXISTS conversations CASCADE")
+	if err != nil {
+		t.Fatalf("Failed to drop conversations table: %v", err)
+	}
+
+	payload := map[string]interface{}{
+		"qr_token":     qrToken,
+		"message_type": "text",
+	}
+
+	payloadBytes, _ := json.Marshal(payload)
+	req, _ := http.NewRequest("POST", "/messages", strings.NewReader(string(payloadBytes)))
+	req.Header.Set("Content-Type", "application/json")
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	// Verify 500 error response
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("expected status 500, got %d", w.Code)
+	}
+
+	var resp models.ErrorResponse
+	err = json.Unmarshal(w.Body.Bytes(), &resp)
+	if err != nil {
+		t.Fatalf("failed to parse error response: %v", err)
+	}
+
+	if resp.Code != "database_error" {
+		t.Errorf("expected code 'database_error', got %s", resp.Code)
+	}
+
+	if resp.Error == "" {
+		t.Error("error message should not be empty")
+	}
+}
+
+// TestHandlerErrorResponseForCreateMessage: Handler returns 500 when message creation fails
+func TestHandlerErrorResponseForCreateMessage(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	// Create test QR code
+	ownerID := uuid.New()
+	qrCodeID := uuid.New()
+	qrToken := "test-token-" + uuid.New().String()
+
+	_, err := db.Exec(context.Background(), `
+		INSERT INTO qr_codes (id, owner_id, qr_token, object_type, object_id, is_active)
+		VALUES ($1, $2, $3, $4, $5, true)
+	`, qrCodeID, ownerID, qrToken, "link", uuid.New())
+	if err != nil {
+		t.Fatalf("Failed to insert test QR code: %v", err)
+	}
+
+	service := services.NewMessageService(db)
+	handler := handlers.NewMessageHandler(service)
+
+	router := gin.New()
+	router.Use(middleware.SessionTracking())
+	router.POST("/messages", handler.CreateMessage)
+
+	// Drop messages table to force DB error on message insert (after conversation succeeds)
+	_, err = db.Exec(context.Background(), "DROP TABLE IF EXISTS messages CASCADE")
+	if err != nil {
+		t.Fatalf("Failed to drop messages table: %v", err)
+	}
+
+	payload := map[string]interface{}{
+		"qr_token":     qrToken,
+		"message_type": "text",
+	}
+
+	payloadBytes, _ := json.Marshal(payload)
+	req, _ := http.NewRequest("POST", "/messages", strings.NewReader(string(payloadBytes)))
+	req.Header.Set("Content-Type", "application/json")
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	// Verify 500 error response
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("expected status 500, got %d", w.Code)
+	}
+
+	var resp models.ErrorResponse
+	err = json.Unmarshal(w.Body.Bytes(), &resp)
+	if err != nil {
+		t.Fatalf("failed to parse error response: %v", err)
+	}
+
+	if resp.Code != "database_error" {
+		t.Errorf("expected code 'database_error', got %s", resp.Code)
+	}
+
+	if resp.Error == "" {
+		t.Error("error message should not be empty")
 	}
 }
