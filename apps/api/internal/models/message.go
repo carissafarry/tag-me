@@ -61,6 +61,13 @@ type CreateMessageResponse struct {
 	CreatedAt      string `json:"created_at"`
 }
 
+// ConversationStatusResponse is returned by GET /conversations/:id/status
+type ConversationStatusResponse struct {
+	ConversationID string `json:"conversation_id"`
+	Status         string `json:"status"`
+	CreatedAt      string `json:"created_at"`
+}
+
 // ErrorResponse is a safe error returned to scanner clients
 type ErrorResponse struct {
 	Error  string `json:"error"`
