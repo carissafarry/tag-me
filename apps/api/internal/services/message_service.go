@@ -14,7 +14,17 @@ var (
 	ErrInvalidQRToken   = errors.New("invalid qr token")
 	ErrInactiveFQRToken = errors.New("qr token inactive")
 	ErrDatabaseError    = errors.New("database error")
+	ErrInvalidStatus    = errors.New("invalid conversation status")
 )
+
+// AllowedConversationStatuses defines the valid status states from TAG-8
+var AllowedConversationStatuses = map[string]bool{
+	"PENDING":    true,
+	"DELIVERED": true,
+	"OPENED":    true,
+	"ON_THE_WAY": true,
+	"RESOLVED":   true,
+}
 
 type MessageService struct {
 	db *pgxpool.Pool
@@ -150,4 +160,31 @@ func (s *MessageService) CreateMessage(
 	}
 
 	return msg, nil
+}
+
+// GetConversationStatus retrieves the current status of a conversation
+// Validates that status is in the allowed set (AC5: status values map correctly from owner actions)
+func (s *MessageService) GetConversationStatus(ctx context.Context, conversationID string) (*models.Conversation, error) {
+	conv := &models.Conversation{}
+	err := s.db.QueryRow(
+		ctx,
+		`SELECT id, status, created_at FROM conversations WHERE id = $1`,
+		conversationID,
+	).Scan(
+		&conv.ID,
+		&conv.Status,
+		&conv.CreatedAt,
+	)
+
+	if err != nil {
+		// QueryRow returns ErrNoRows if not found
+		return nil, ErrDatabaseError
+	}
+
+	// AC2: Validate that returned status is one of the allowed states
+	if !AllowedConversationStatuses[conv.Status] {
+		return nil, ErrInvalidStatus
+	}
+
+	return conv, nil
 }
