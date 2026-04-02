@@ -101,3 +101,35 @@ func (h *MessageHandler) CreateMessage(c *gin.Context) {
 
 	c.JSON(http.StatusCreated, response)
 }
+
+// GetConversationStatus handles GET /conversations/:id/status
+// Returns only scanner-safe fields: conversation_id, status, created_at
+// Handles not found safely
+func (h *MessageHandler) GetConversationStatus(c *gin.Context) {
+	conversationID := c.Param("id")
+	if conversationID == "" {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse{
+			Error: "missing conversation id",
+			Code:  "validation_error",
+		})
+		return
+	}
+
+	conversation, err := h.service.GetConversationStatus(c.Request.Context(), conversationID)
+	if err != nil {
+		// Return safe not found error - don't leak DB details
+		c.JSON(http.StatusNotFound, models.ErrorResponse{
+			Error: "conversation not found",
+			Code:  "not_found",
+		})
+		return
+	}
+
+	response := models.ConversationStatusResponse{
+		ConversationID: conversation.ID.String(),
+		Status:         conversation.Status,
+		CreatedAt:      conversation.CreatedAt.Format("2006-01-02 15:04:05"),
+	}
+
+	c.JSON(http.StatusOK, response)
+}

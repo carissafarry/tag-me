@@ -43,6 +43,7 @@ func main() {
 
 	// Routes
 	router.POST("/messages", messageHandler.CreateMessage)
+	router.GET("/conversations/:id/status", messageHandler.GetConversationStatus)
 
 	// Health check
 	router.GET("/health", func(c *gin.Context) {

@@ -732,3 +732,275 @@ func TestHandlerErrorResponseForCreateMessage(t *testing.T) {
 		t.Error("error message should not be empty")
 	}
 }
+
+// TestGetConversationStatusValid: TAG-8 - Valid status lookup returns correct response
+func TestGetConversationStatusValid(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	// Create test QR code and conversation
+	ownerID := uuid.New()
+	qrCodeID := uuid.New()
+	qrToken := "test-token-" + uuid.New().String()
+	conversationID := uuid.New()
+
+	_, err := db.Exec(context.Background(), `
+		INSERT INTO qr_codes (id, owner_id, qr_token, object_type, object_id, is_active)
+		VALUES ($1, $2, $3, $4, $5, true)
+	`, qrCodeID, ownerID, qrToken, "link", uuid.New())
+	if err != nil {
+		t.Fatalf("Failed to insert test QR code: %v", err)
+	}
+
+	_, err = db.Exec(context.Background(), `
+		INSERT INTO conversations (id, qr_code_id, owner_id, status, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, NOW(), NOW())
+	`, conversationID, qrCodeID, ownerID, "PENDING")
+	if err != nil {
+		t.Fatalf("Failed to insert test conversation: %v", err)
+	}
+
+	service := services.NewMessageService(db)
+	handler := handlers.NewMessageHandler(service)
+
+	router := gin.New()
+	router.GET("/conversations/:id/status", handler.GetConversationStatus)
+
+	req, _ := http.NewRequest("GET", "/conversations/"+conversationID.String()+"/status", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp models.ConversationStatusResponse
+	err = json.Unmarshal(w.Body.Bytes(), &resp)
+	if err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+
+	if resp.ConversationID != conversationID.String() {
+		t.Errorf("expected conversation_id %s, got %s", conversationID.String(), resp.ConversationID)
+	}
+	if resp.Status != "PENDING" {
+		t.Errorf("expected status 'PENDING', got %s", resp.Status)
+	}
+	if resp.CreatedAt == "" {
+		t.Error("response missing created_at")
+	}
+
+	// Verify response has exactly 3 fields, no owner/session data
+	respMap := make(map[string]interface{})
+	json.Unmarshal(w.Body.Bytes(), &respMap)
+
+	expectedFields := map[string]bool{
+		"conversation_id": true,
+		"status":          true,
+		"created_at":      true,
+	}
+	for field := range respMap {
+		if !expectedFields[field] {
+			t.Errorf("response contains unexpected field: %s", field)
+		}
+	}
+
+	// Verify no sensitive fields in response body
+	respBody := w.Body.String()
+	sensitiveFields := []string{"owner_id", "qr_code_id", "session_id", "ip_address"}
+	for _, field := range sensitiveFields {
+		if strings.Contains(respBody, field) {
+			t.Errorf("response should not contain sensitive field: %s", field)
+		}
+	}
+}
+
+// TestGetConversationStatusNotFound: TAG-8 - Not found case returns safe error
+func TestGetConversationStatusNotFound(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	service := services.NewMessageService(db)
+	handler := handlers.NewMessageHandler(service)
+
+	router := gin.New()
+	router.GET("/conversations/:id/status", handler.GetConversationStatus)
+
+	nonexistentID := uuid.New().String()
+	req, _ := http.NewRequest("GET", "/conversations/"+nonexistentID+"/status", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected status 404, got %d", w.Code)
+	}
+
+	var resp models.ErrorResponse
+	err := json.Unmarshal(w.Body.Bytes(), &resp)
+	if err != nil {
+		t.Fatalf("failed to parse error response: %v", err)
+	}
+
+	if resp.Code != "not_found" {
+		t.Errorf("expected code 'not_found', got %s", resp.Code)
+	}
+	if resp.Error == "" {
+		t.Error("error message should not be empty")
+	}
+}
+
+// TestStatusMappingLogic: AC2 & AC5 - Unit test for status mapping and allowed states
+func TestStatusMappingLogic(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	ownerID := uuid.New()
+	service := services.NewMessageService(db)
+
+	// Test all allowed status states from AC2
+	allowedStates := []string{"PENDING", "DELIVERED", "OPENED", "ON_THE_WAY", "RESOLVED"}
+
+	for _, state := range allowedStates {
+		t.Run("status_"+state, func(t *testing.T) {
+			conversationID := uuid.New()
+			qrCodeID := uuid.New()
+			qrToken := "test-token-" + uuid.New().String()
+
+			_, err := db.Exec(context.Background(), `
+				INSERT INTO qr_codes (id, owner_id, qr_token, object_type, object_id, is_active)
+				VALUES ($1, $2, $3, $4, $5, true)
+			`, qrCodeID, ownerID, qrToken, "link", uuid.New())
+			if err != nil {
+				t.Fatalf("Failed to insert QR code: %v", err)
+			}
+
+			// Insert conversation with specific status
+			_, err = db.Exec(context.Background(), `
+				INSERT INTO conversations (id, qr_code_id, owner_id, status, created_at, updated_at)
+				VALUES ($1, $2, $3, $4, NOW(), NOW())
+			`, conversationID, qrCodeID, ownerID, state)
+			if err != nil {
+				t.Fatalf("Failed to insert conversation with status %s: %v", state, err)
+			}
+
+			// Retrieve status and verify it matches
+			conv, err := service.GetConversationStatus(context.Background(), conversationID.String())
+			if err != nil {
+				t.Errorf("unexpected error retrieving status %s: %v", state, err)
+				return
+			}
+
+			if conv.Status != state {
+				t.Errorf("expected status %s, got %s", state, conv.Status)
+			}
+		})
+	}
+}
+
+// TestInvalidStatusRejection: AC2 - Invalid status in DB is caught and rejected
+func TestInvalidStatusRejection(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	ownerID := uuid.New()
+	qrCodeID := uuid.New()
+	conversationID := uuid.New()
+	qrToken := "test-token-" + uuid.New().String()
+	service := services.NewMessageService(db)
+
+	_, err := db.Exec(context.Background(), `
+		INSERT INTO qr_codes (id, owner_id, qr_token, object_type, object_id, is_active)
+		VALUES ($1, $2, $3, $4, $5, true)
+	`, qrCodeID, ownerID, qrToken, "link", uuid.New())
+	if err != nil {
+		t.Fatalf("Failed to insert QR code: %v", err)
+	}
+
+	// Insert conversation with INVALID status
+	_, err = db.Exec(context.Background(), `
+		INSERT INTO conversations (id, qr_code_id, owner_id, status, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, NOW(), NOW())
+	`, conversationID, qrCodeID, ownerID, "INVALID_STATUS")
+	if err != nil {
+		t.Fatalf("Failed to insert conversation: %v", err)
+	}
+
+	// Service should reject invalid status
+	_, err = service.GetConversationStatus(context.Background(), conversationID.String())
+	if err != services.ErrInvalidStatus {
+		t.Errorf("expected ErrInvalidStatus, got %v", err)
+	}
+}
+
+// TestStateTransitionReadLogic: AC5 - Integration test verifying state transitions are readable
+// Simulates: scanner sees initial state → owner changes state → scanner sees updated state
+func TestStateTransitionReadLogic(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	ownerID := uuid.New()
+	qrCodeID := uuid.New()
+	conversationID := uuid.New()
+	qrToken := "test-token-" + uuid.New().String()
+	service := services.NewMessageService(db)
+	handler := handlers.NewMessageHandler(service)
+
+	// Setup: Create QR code and conversation in PENDING state
+	_, err := db.Exec(context.Background(), `
+		INSERT INTO qr_codes (id, owner_id, qr_token, object_type, object_id, is_active)
+		VALUES ($1, $2, $3, $4, $5, true)
+	`, qrCodeID, ownerID, qrToken, "link", uuid.New())
+	if err != nil {
+		t.Fatalf("Failed to insert QR code: %v", err)
+	}
+
+	_, err = db.Exec(context.Background(), `
+		INSERT INTO conversations (id, qr_code_id, owner_id, status, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, NOW(), NOW())
+	`, conversationID, qrCodeID, ownerID, "PENDING")
+	if err != nil {
+		t.Fatalf("Failed to insert conversation: %v", err)
+	}
+
+	router := gin.New()
+	router.GET("/conversations/:id/status", handler.GetConversationStatus)
+
+	// Step 1: Scanner sees initial PENDING state
+	req1, _ := http.NewRequest("GET", "/conversations/"+conversationID.String()+"/status", nil)
+	w1 := httptest.NewRecorder()
+	router.ServeHTTP(w1, req1)
+
+	var resp1 models.ConversationStatusResponse
+	json.Unmarshal(w1.Body.Bytes(), &resp1)
+
+	if resp1.Status != "PENDING" {
+		t.Fatalf("expected initial status 'PENDING', got %s", resp1.Status)
+	}
+
+	// Step 2: Owner updates conversation status to DELIVERED (simulating owner action)
+	_, err = db.Exec(context.Background(), `
+		UPDATE conversations SET status = 'DELIVERED', updated_at = NOW() WHERE id = $1
+	`, conversationID)
+	if err != nil {
+		t.Fatalf("Failed to update conversation status: %v", err)
+	}
+
+	// Step 3: Scanner polls again and sees DELIVERED state
+	req2, _ := http.NewRequest("GET", "/conversations/"+conversationID.String()+"/status", nil)
+	w2 := httptest.NewRecorder()
+	router.ServeHTTP(w2, req2)
+
+	var resp2 models.ConversationStatusResponse
+	json.Unmarshal(w2.Body.Bytes(), &resp2)
+
+	if resp2.Status != "DELIVERED" {
+		t.Errorf("expected updated status 'DELIVERED', got %s", resp2.Status)
+	}
+
+	// Verify scanner never sees owner_id in either response
+	respBody1 := w1.Body.String()
+	respBody2 := w2.Body.String()
+	if strings.Contains(respBody1, "owner") || strings.Contains(respBody2, "owner") {
+		t.Error("response must not expose owner information")
+	}
+}
