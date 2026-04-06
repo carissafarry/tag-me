@@ -1,133 +1,427 @@
 "use client";
 
+import Link from "next/link";
+import { useParams } from "next/navigation";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  Check,
-  MessageSquare,
-  Image as ImageIcon,
-  Shield,
-  RotateCcw,
+  ArrowLeft,
   ArrowRight,
+  Bell,
+  Check,
+  CheckCircle2,
+  Clock3,
+  LinkIcon,
+  RefreshCcw,
+  ScanLine,
+  Shield,
+  TriangleAlert,
 } from "lucide-react";
 
-interface SuccessScreenProps {
-  status?: string;
-  notificationMethod?: string;
-  attachedImage?: string;
-}
+import {
+  getConversationStatus,
+  isApiError,
+  type ConversationStatusResponse,
+} from "@/lib/api";
+import {
+  formatAge,
+  formatSentAt,
+  getConversationStatusErrorMessage,
+  getConversationViewModel,
+  minutesSince,
+} from "@/lib/conversation-status";
 
-export default function SuccessScreen({
-  status = "Notification delivered successfully",
-  notificationMethod = "WhatsApp",
-  attachedImage = "https://hebbkx1anhila5yf.public.blob.vercel-storage.com/screen-kbPIwLfcDzANXVwFiJe3MD7QQ7r6PU.png",
-}: SuccessScreenProps) {
+const POLL_INTERVAL_MS = 5000;
+
+const ICONS = {
+  clock: Clock3,
+  success: CheckCircle2,
+  warning: TriangleAlert,
+};
+
+export default function ConversationStatusPage() {
+  const params = useParams<{ id?: string }>();
+  const conversationId = typeof params?.id === "string" ? params.id.trim() : "";
+
+  const [statusResponse, setStatusResponse] =
+    useState<ConversationStatusResponse | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [isInitialLoading, setIsInitialLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [lastCheckedAt, setLastCheckedAt] = useState<Date | null>(null);
+  const [isCopied, setIsCopied] = useState(false);
+
+  const refreshStatus = useCallback(
+    async (options?: { silent?: boolean }) => {
+      if (!conversationId) {
+        setError("Conversation ID is missing.");
+        setIsInitialLoading(false);
+        return;
+      }
+
+      if (!options?.silent) {
+        setIsRefreshing(true);
+      }
+
+      try {
+        const response = await getConversationStatus(conversationId);
+        setStatusResponse(response);
+        setError(null);
+        setLastCheckedAt(new Date());
+      } catch (cause) {
+        setError(getConversationStatusErrorMessage(cause));
+
+        if (isApiError(cause) && cause.status === 404) {
+          setStatusResponse(null);
+        }
+      } finally {
+        setIsInitialLoading(false);
+        if (!options?.silent) {
+          setIsRefreshing(false);
+        }
+      }
+    },
+    [conversationId],
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!conversationId) {
+      setIsInitialLoading(false);
+      setError("Conversation ID is missing.");
+      setStatusResponse(null);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    void refreshStatus();
+
+    const intervalId = window.setInterval(() => {
+      if (!cancelled) {
+        void refreshStatus({ silent: true });
+      }
+    }, POLL_INTERVAL_MS);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [conversationId, refreshStatus]);
+
+  const handleCopyLink = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(window.location.href);
+      setIsCopied(true);
+      window.setTimeout(() => {
+        setIsCopied(false);
+      }, 2000);
+    } catch {
+      setError("Unable to copy the conversation link right now.");
+    }
+  }, []);
+
+  const viewModel = useMemo(
+    () => getConversationViewModel(statusResponse),
+    [statusResponse],
+  );
+
+  const sentAt = statusResponse ? formatSentAt(statusResponse.created_at) : "";
+  const ageLabel = statusResponse
+    ? formatAge(minutesSince(statusResponse.created_at))
+    : "";
+  const canOpenFallback = viewModel.showFallback;
+  const hasTerminalError = Boolean(error && !statusResponse);
+  const isConversationUnavailable = !conversationId || hasTerminalError;
+  const StatusIcon = ICONS[viewModel.iconName];
+
   return (
-    <div className="min-h-dvh bg-gray-50 flex flex-col">
-      {/* Header */}
-      <header className="flex items-center justify-between px-4 py-3 md:px-6 lg:px-8">
-        <span className="font-bold text-xl">TagMe</span>
-        <div className="w-10 h-10 rounded-full bg-yellow-400 border-2 border-yellow-500 overflow-hidden">
-          <div className="w-full h-full bg-amber-200 flex items-center justify-center text-xs">
-            <span className="text-amber-800">U</span>
+    <div className="min-h-dvh bg-[radial-gradient(circle_at_top,_rgba(250,204,21,0.24),_transparent_36%),linear-gradient(180deg,_#fffdf5_0%,_#fff8e7_52%,_#f8fafc_100%)] text-slate-900">
+      <header className="mx-auto flex w-full max-w-6xl items-center justify-between px-4 py-4 sm:px-6 lg:px-8">
+        <div className="flex items-center gap-3">
+          <Link
+            href="/scan"
+            className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/70 bg-white/80 shadow-sm backdrop-blur transition hover:bg-white"
+            aria-label="Back to scan"
+          >
+            <ArrowLeft className="h-4 w-4" />
+          </Link>
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.25em] text-slate-500">
+              Tag Me
+            </p>
+            <h1 className="text-lg font-semibold sm:text-xl">
+              Conversation status
+            </h1>
           </div>
+        </div>
+
+        <div className="hidden items-center gap-3 sm:flex">
+          <span className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-medium text-amber-900">
+            Anonymous relay
+          </span>
+          <button
+            type="button"
+            onClick={() => void handleCopyLink()}
+            className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm transition hover:border-slate-300 hover:text-slate-900"
+          >
+            {isCopied ? (
+              <Check className="h-4 w-4" />
+            ) : (
+              <LinkIcon className="h-4 w-4" />
+            )}
+            {isCopied ? "Copied" : "Copy link"}
+          </button>
+          <Link
+            href="/scan"
+            className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm transition hover:border-slate-300 hover:text-slate-900"
+          >
+            <ScanLine className="h-4 w-4" />
+            New scan
+          </Link>
         </div>
       </header>
 
-      {/* Main Content */}
-      <main className="flex-1 px-4 pb-6 md:px-6 lg:px-8">
-        <div className="max-w-4xl mx-auto w-full">
-          {/* Success Hero */}
-          <div className="relative flex flex-col items-center pt-4 pb-6 md:pt-8 md:pb-8">
-            {/* Yellow gradient background */}
-            <div className="absolute top-0 left-1/2 -translate-x-1/2 w-64 md:w-96 h-32 md:h-48 bg-gradient-to-b from-yellow-100 to-transparent rounded-full blur-2xl" />
-
-            {/* Success Icon */}
-            <div className="relative w-28 h-28 md:w-36 md:h-36 bg-yellow-400 rounded-full flex items-center justify-center mb-6 shadow-lg">
-              <div className="w-16 h-16 md:w-20 md:h-20 bg-yellow-500 rounded-full flex items-center justify-center">
-                <Check
-                  className="w-10 h-10 md:w-12 md:h-12 text-white"
-                  strokeWidth={3}
-                />
+      <main className="mx-auto w-full max-w-6xl px-4 pb-12 sm:px-6 lg:px-8">
+        {isConversationUnavailable ? (
+          <div className="mt-6 rounded-[2rem] border border-red-200 bg-red-50 p-6 text-red-900 shadow-sm">
+            <div className="flex items-start gap-3">
+              <TriangleAlert className="mt-0.5 h-5 w-5 shrink-0" />
+              <div className="space-y-3">
+                <h2 className="text-lg font-semibold">
+                  Conversation unavailable
+                </h2>
+                <p className="text-sm leading-6">{error}</p>
+                <div className="flex flex-wrap gap-3">
+                  <button
+                    type="button"
+                    onClick={() => void refreshStatus()}
+                    className="inline-flex items-center gap-2 rounded-2xl bg-red-950 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-red-900"
+                  >
+                    Retry
+                  </button>
+                  <Link
+                    href="/scan"
+                    className="inline-flex items-center gap-2 rounded-2xl border border-red-200 bg-white px-4 py-2.5 text-sm font-semibold text-red-900 transition hover:border-red-300"
+                  >
+                    Back to scan
+                  </Link>
+                </div>
               </div>
-            </div>
-
-            <h1 className="text-3xl md:text-4xl font-bold text-gray-900 mb-2">
-              Message Sent!
-            </h1>
-            <p className="text-gray-500 md:text-lg">{status}</p>
-
-            {/* Status Badge */}
-            <div className="mt-4 bg-gray-200 rounded-full px-4 py-2 flex items-center gap-2">
-              <MessageSquare className="w-4 h-4 text-green-600" />
-              <span className="text-sm font-medium text-gray-700">
-                Notified via {notificationMethod}
-              </span>
             </div>
           </div>
+        ) : (
+          <>
+            <section className="grid gap-6 lg:grid-cols-[1.15fr_0.85fr]">
+              <div className="rounded-[2rem] border border-white/80 bg-white/80 p-6 shadow-[0_18px_60px_rgba(15,23,42,0.08)] backdrop-blur sm:p-8">
+                <div className="flex flex-col gap-6">
+                  <div className="flex flex-wrap items-start justify-between gap-4">
+                    <div className="space-y-3">
+                      <div className="inline-flex items-center gap-2 rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-amber-900">
+                        <Bell className="h-3.5 w-3.5" />
+                        Message sent
+                      </div>
+                      <div>
+                        <h2 className="text-3xl font-semibold tracking-tight sm:text-4xl">
+                          Your message is in the relay
+                        </h2>
+                        <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-600 sm:text-base">
+                          The owner will receive the alert without seeing your
+                          contact details.
+                        </p>
+                      </div>
+                    </div>
 
-          {/* Two Column Layout for larger screens */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mt-4">
-            {/* Attached Media */}
-            <section className="bg-white rounded-2xl p-4 md:p-5 shadow-sm">
-              <div className="flex items-center justify-between mb-3">
-                <span className="text-xs font-medium text-gray-400 uppercase tracking-wider">
-                  Attached Media
-                </span>
-                <ImageIcon className="w-5 h-5 text-gray-300" />
+                    <button
+                      type="button"
+                      onClick={() => void refreshStatus()}
+                      className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm transition hover:border-slate-300 hover:text-slate-900"
+                    >
+                      <RefreshCcw
+                        className={`h-4 w-4 ${isRefreshing ? "animate-spin" : ""}`}
+                      />
+                      Refresh
+                    </button>
+                  </div>
+
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                        Sent at
+                      </p>
+                      <p className="mt-2 text-sm text-slate-900">
+                        {sentAt || "Waiting for server time"}
+                      </p>
+                    </div>
+
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                        Last checked
+                      </p>
+                      <p className="mt-2 text-sm text-slate-900">
+                        {lastCheckedAt
+                          ? new Intl.DateTimeFormat("en-US", {
+                              timeStyle: "short",
+                            }).format(lastCheckedAt)
+                          : "Checking now"}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="rounded-[1.75rem] border border-slate-200 bg-slate-50 p-5 sm:p-6">
+                    <div className="flex items-start gap-4">
+                      <div
+                        className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border ${viewModel.toneClass}`}
+                      >
+                        <StatusIcon className="h-6 w-6" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                            {viewModel.eyebrow}
+                          </span>
+                          {statusResponse ? (
+                            <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-600">
+                              Status: {viewModel.statusLabel}
+                            </span>
+                          ) : null}
+                          {ageLabel ? (
+                            <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-600">
+                              {ageLabel}
+                            </span>
+                          ) : null}
+                        </div>
+
+                        <h3 className="mt-3 text-2xl font-semibold tracking-tight">
+                          {viewModel.title}
+                        </h3>
+                        <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-600 sm:text-base">
+                          {viewModel.body}
+                        </p>
+                      </div>
+                    </div>
+
+                    {error ? (
+                      <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                        {error}
+                      </div>
+                    ) : null}
+                  </div>
+
+                  <div className="flex flex-wrap gap-3">
+                    <Link
+                      href="/scan"
+                      className="inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-900 px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800"
+                    >
+                      Scan another QR
+                      <ArrowRight className="h-4 w-4" />
+                    </Link>
+
+                    {viewModel.reminderState === "deferred" ? (
+                      <button
+                        type="button"
+                        disabled
+                        className="cursor-not-allowed inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-slate-100 px-5 py-3 text-sm font-semibold text-slate-400"
+                        title={viewModel.reminderHint}
+                      >
+                        {viewModel.reminderLabel}
+                        <Bell className="h-4 w-4" />
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
               </div>
-              <div className="rounded-xl overflow-hidden bg-gray-900 aspect-[4/3]">
-                <img
-                  src={attachedImage}
-                  alt="Attached media"
-                  className="w-full h-full object-cover"
-                />
-              </div>
+
+              <aside className="space-y-6">
+                <div className="rounded-[2rem] border border-white/80 bg-slate-950 p-6 text-white shadow-[0_18px_60px_rgba(15,23,42,0.16)] sm:p-7">
+                  <div className="absolute pb-5 right-10 w-30 h-30 opacity-20">
+                    <Shield className="w-full h-full text-amber-500" />
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-white/10">
+                      <Shield className="h-5 w-5 text-amber-300" />
+                    </div>
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-[0.2em] text-white/55">
+                        Privacy guard
+                      </p>
+                      <h3 className="text-lg font-semibold">
+                        Anonymous by design
+                      </h3>
+                    </div>
+                  </div>
+
+                  <p className="mt-4 text-sm leading-6 text-white/70">
+                    Your contact information stays private. The owner only sees
+                    the message relay and the current conversation state.
+                  </p>
+
+                  {/* <div className="mt-5 rounded-2xl border border-white/10 bg-white/5 p-4">
+                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-white/55">
+                      Live status
+                    </p>
+                    <p className="mt-2 text-sm text-white/80">
+                      {statusResponse
+                        ? `${statusResponse.status} is the latest update for this conversation.`
+                        : "Waiting for the first status response."}
+                    </p>
+                  </div> */}
+                </div>
+              </aside>
             </section>
 
-            {/* Right column content */}
-            <div className="space-y-5">
-              {/* Privacy Guard */}
-              <section className="bg-lime-200 rounded-2xl p-5 md:p-6 relative overflow-hidden">
-                <div className="absolute bottom-0 right-0 w-24 h-24 opacity-20">
-                  <Shield className="w-full h-full text-lime-500" />
-                </div>
-                <div className="flex items-center gap-2 mb-2">
-                  <Shield className="w-5 h-5 text-green-700" />
-                  <h3 className="font-semibold text-gray-900">Privacy Guard</h3>
-                </div>
-                <p className="text-sm md:text-base text-gray-700 leading-relaxed relative z-10">
-                  Your contact info remains private. The owner only sees a
-                  temporary TagMe alias.
-                </p>
-              </section>
+            {isInitialLoading && !statusResponse ? (
+              <div className="mt-6 rounded-[2rem] border border-dashed border-slate-300 bg-white/80 p-6 text-sm text-slate-500 shadow-sm">
+                Loading conversation status...
+              </div>
+            ) : null}
 
-              {/* Follow-up */}
-              <section className="bg-gray-100 rounded-2xl p-4 flex items-center justify-between gap-4">
-                <div className="flex items-center gap-3 min-w-0">
-                  <div className="w-10 h-10 bg-white rounded-full flex items-center justify-center flex-shrink-0">
-                    <RotateCcw className="w-5 h-5 text-gray-400" />
-                  </div>
-                  <div className="min-w-0">
-                    <p className="font-medium text-gray-900 text-sm">
-                      Need to add more?
+            {statusResponse && canOpenFallback ? (
+              <div className="mt-6 rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm sm:p-7">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
+                      Fallback guidance
                     </p>
-                    <p className="text-xs text-gray-500 truncate">
-                      Send another update to the owner
-                    </p>
+                    <h2 className="mt-2 text-xl font-semibold">
+                      The owner has not replied in time
+                    </h2>
                   </div>
                 </div>
-                <button className="px-4 py-2 bg-white rounded-xl text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50 transition-colors flex-shrink-0">
-                  Follow up
-                </button>
-              </section>
-            </div>
-          </div>
 
-          {/* CTA Button */}
-          <button className="w-full md:max-w-md md:mx-auto bg-yellow-400 hover:bg-yellow-500 transition-colors text-gray-900 font-semibold rounded-2xl py-4 flex items-center justify-center gap-2 mt-6 active:scale-[0.98] touch-manipulation">
-            <span>I&apos;m done</span>
-            <ArrowRight className="w-5 h-5" />
-          </button>
-        </div>
+                <div className="mt-5 grid gap-4 md:grid-cols-3">
+                  <div className="rounded-2xl bg-slate-50 p-4">
+                    <p className="text-sm font-semibold text-slate-900">
+                      Try again later
+                    </p>
+                    <p className="mt-2 text-sm leading-6 text-slate-600">
+                      If the vehicle owner is unavailable, wait a bit and
+                      refresh the status.
+                    </p>
+                  </div>
+                  <div className="rounded-2xl bg-slate-50 p-4">
+                    <p className="text-sm font-semibold text-slate-900">
+                      Use the reminder flow
+                    </p>
+                    <p className="mt-2 text-sm leading-6 text-slate-600">
+                      The reminder CTA stays available while the conversation is
+                      still actionable.
+                    </p>
+                  </div>
+                  <div className="rounded-2xl bg-slate-50 p-4">
+                    <p className="text-sm font-semibold text-slate-900">
+                      Escalate locally
+                    </p>
+                    <p className="mt-2 text-sm leading-6 text-slate-600">
+                      If needed, contact the nearby security team or on-site
+                      staff.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+          </>
+        )}
       </main>
     </div>
   );

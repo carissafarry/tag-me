@@ -17,7 +17,20 @@ import {
   Settings,
 } from "lucide-react";
 
-const messages = [
+import {
+  getApiErrorMessage,
+  sendMessage,
+  type ScannerMessageType,
+} from "@/lib/api";
+
+interface MessageOption {
+  id: number;
+  icon: typeof Ban;
+  label: string;
+  messageType: ScannerMessageType;
+}
+
+const messages: MessageOption[] = [
   {
     id: 1,
     icon: Ban,
@@ -85,10 +98,6 @@ export default function TagMePage() {
     setError(null);
 
     try {
-      const baseUrl =
-        process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") ||
-        "http://localhost:8080";
-
       const payload = {
         qr_token: qrToken,
         message_type: selectedMessageConfig.messageType,
@@ -97,27 +106,8 @@ export default function TagMePage() {
           : {}),
       };
 
-      const response = await fetch(`${baseUrl}/messages`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(payload),
-      });
-
-      const data = await response.json().catch(() => null);
-
-      if (!response.ok) {
-        const message =
-          (data && typeof data.error === "string" && data.error) ||
-          "Failed to send notification. Please try again.";
-        throw new Error(message);
-      }
-
-      const conversationId =
-        data && typeof data.conversation_id === "string"
-          ? data.conversation_id
-          : null;
+      const data = await sendMessage(payload);
+      const conversationId = data.conversation_id;
 
       if (!conversationId) {
         throw new Error(
@@ -128,9 +118,10 @@ export default function TagMePage() {
       router.push(`/conversations/${conversationId}`);
     } catch (err) {
       setError(
-        err instanceof Error
-          ? err.message
-          : "Something went wrong while sending the notification.",
+        getApiErrorMessage(
+          err,
+          "Something went wrong while sending the notification.",
+        ),
       );
     } finally {
       setIsSubmitting(false);
