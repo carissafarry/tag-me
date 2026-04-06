@@ -4,7 +4,9 @@ import (
 	"context"
 	"log"
 	"os"
+	"time"
 
+	"github.com/gin-contrib/cors"
 	"github.com/carissafarry/tag-me/api/internal/handlers"
 	"github.com/carissafarry/tag-me/api/internal/middleware"
 	"github.com/carissafarry/tag-me/api/internal/services"
@@ -33,6 +35,15 @@ func main() {
 
 	// Initialize router
 	router := gin.Default()
+
+	router.Use(cors.New(cors.Config{
+		AllowOrigins:     []string{"http://localhost:3000"},
+		AllowMethods:     []string{"GET", "POST", "PATCH", "DELETE", "OPTIONS"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Accept", "X-Session-ID"},
+		ExposeHeaders:    []string{"Content-Length"},
+		AllowCredentials: false,
+		MaxAge:           12 * time.Hour,
+	}))
 
 	// Apply middleware
 	router.Use(middleware.SessionTracking())
