@@ -1,2 +1,3 @@
 ./tmp
 ./apps/api/tmp/main
+.env

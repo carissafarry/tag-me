@@ -8,7 +8,10 @@ COVERAGE_FILE="coverage.out"
 echo "==> Running Go tests with coverage..."
 cd "$API_DIR"
 
-go test ./... -coverpkg=./... -coverprofile="$COVERAGE_FILE" >/tmp/tagme_go_test.log 2>&1 || {
+echo "==> go version (before test)"
+GOTOOLCHAIN=auto go version
+
+GOTOOLCHAIN=auto go test ./... -coverpkg=./... -coverprofile="$COVERAGE_FILE" >/tmp/tagme_go_test.log 2>&1 || {
   echo "STATUS=TEST_FAIL"
   echo "COVERAGE=0"
   echo "==> go test failed"
@@ -16,7 +19,7 @@ go test ./... -coverpkg=./... -coverprofile="$COVERAGE_FILE" >/tmp/tagme_go_test
   exit 1
 }
 
-COVERAGE_LINE="$(go tool cover -func="$COVERAGE_FILE" | grep total:)"
+COVERAGE_LINE="$(GOTOOLCHAIN=auto go tool cover -func="$COVERAGE_FILE" | grep total:)"
 COVERAGE_VALUE="$(echo "$COVERAGE_LINE" | awk '{print $3}' | tr -d '%')"
 
 echo "==> Coverage line: $COVERAGE_LINE"
