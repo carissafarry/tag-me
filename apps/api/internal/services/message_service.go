@@ -32,6 +32,14 @@ var AllowedConversationStatuses = map[string]bool{
 }
 
 type MessageService struct {
+	qrCodes          QRCodeRepository
+	conversations    ConversationRepository
+	messages         MessageRepository
+	messageStates    MessageStateReader
+	creationGuard    ConversationCreationGuardRepository
+	creationCooldown time.Duration
+	maxMessagesPerQR int
+}
 
 type QRCodeRepository interface {
 	FindByToken(ctx context.Context, qrToken string) (*models.QRCode, error)
@@ -45,10 +53,84 @@ type ConversationRepository interface {
 type MessageRepository interface {
 	Create(ctx context.Context, message *models.Message) (*models.Message, error)
 }
+
+type MessageStateReader interface {
+	GetState(ctx context.Context, sessionID string, qrID string) (*models.MessageState, error)
+}
+
+type ConversationCreationGuardRepository interface {
+	ReserveConversationCreation(ctx context.Context, sessionID string, ipAddress string, qrID string, ttl time.Duration) (bool, time.Duration, error)
+}
+
+type MessageConfig struct {
+	ConversationCreationCooldown time.Duration
+	MaxMessagesPerSessionQR      int
+}
+
+type ConversationRateLimitError struct {
+	RetryAfter time.Duration
+	Reason     string // COOLDOWN or DAILY_LIMIT
+}
+
+func (e *ConversationRateLimitError) Error() string {
+	if e.Reason == "DAILY_LIMIT" {
+		return "you have reached the daily message limit"
+	}
+	if e.RetryAfter > 0 {
+		return fmt.Sprintf("you have reached the limit for creating conversations, please try again later (retry after %s)", e.RetryAfter)
+	}
+	return "you have reached the limit for creating conversations, please try again later"
+}
+
+func (e *ConversationRateLimitError) Is(target error) bool {
+	if e.Reason == "DAILY_LIMIT" {
+		return target == ErrDailyMessageLimitExceeded
+	}
+	return target == ErrConversationRateLimited
 }
 
 func NewMessageService(db *pgxpool.Pool) *MessageService {
-	return &MessageService{db: db}
+	return NewMessageServiceWithDependencies(
+		repository.NewQRCodeRepository(db),
+		repository.NewConversationRepository(db),
+		repository.NewMessageRepository(db),
+		nil,
+		nil,
+		nil,
+	)
+}
+
+func NewMessageServiceWithDependencies(
+	qrCodes QRCodeRepository,
+	conversations ConversationRepository,
+	messages MessageRepository,
+	messageStates MessageStateReader,
+	creationGuard ConversationCreationGuardRepository,
+	config *MessageConfig,
+) *MessageService {
+	finalConfig := MessageConfig{
+		ConversationCreationCooldown: time.Minute,
+		MaxMessagesPerSessionQR:      5,
+	}
+
+	if config != nil {
+		if config.ConversationCreationCooldown > 0 {
+			finalConfig.ConversationCreationCooldown = config.ConversationCreationCooldown
+		}
+		if config.MaxMessagesPerSessionQR > 0 {
+			finalConfig.MaxMessagesPerSessionQR = config.MaxMessagesPerSessionQR
+		}
+	}
+
+	return &MessageService{
+		qrCodes:          qrCodes,
+		conversations:    conversations,
+		messages:         messages,
+		messageStates:    messageStates,
+		creationGuard:    creationGuard,
+		creationCooldown: finalConfig.ConversationCreationCooldown,
+		maxMessagesPerQR: finalConfig.MaxMessagesPerSessionQR,
+	}
 }
 
 // ResolveQRToken validates qr_token and returns owner and object context
@@ -71,7 +153,33 @@ func (s *MessageService) ResolveQRToken(ctx context.Context, qrToken string) (*m
 }
 
 // CreateConversation creates a new conversation for a QR code if one doesn't exist
-func (s *MessageService) CreateConversation(ctx context.Context, qrCode *models.QRCode) (*models.Conversation, error) {
+func (s *MessageService) CreateConversation(ctx context.Context, qrCode *models.QRCode, sessionID string, ipAddress string) (*models.Conversation, error) {
+	if s.creationGuard != nil && sessionID != "" && ipAddress != "" {
+		allowed, retryAfter, err := s.creationGuard.ReserveConversationCreation(
+			ctx,
+			sessionID,
+			ipAddress,
+			qrCode.ID.String(),
+			s.creationCooldown,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %w", ErrMessageServiceUnavailable, err)
+		}
+		if !allowed {
+			return nil, &ConversationRateLimitError{RetryAfter: retryAfter, Reason: "COOLDOWN"}
+		}
+	}
+
+	if s.messageStates != nil && sessionID != "" && s.maxMessagesPerQR > 0 {
+		messageState, err := s.messageStates.GetState(ctx, sessionID, qrCode.ID.String())
+		if err != nil {
+			return nil, fmt.Errorf("%w: %w", ErrMessageServiceUnavailable, err)
+		}
+		if messageState.Count >= s.maxMessagesPerQR {
+			return nil, &ConversationRateLimitError{Reason: "DAILY_LIMIT"}
+		}
+	}
+
 	conv := &models.Conversation{
 		ID:       uuid.New(),
 		QRCodeID: qrCode.ID,

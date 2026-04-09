@@ -72,8 +72,37 @@ func (h *MessageHandler) CreateMessage(c *gin.Context) {
 	}
 
 	// Create conversation record
-	conversation, err := h.service.CreateConversation(c.Request.Context(), qrCode)
+	conversation, err := h.service.CreateConversation(c.Request.Context(), qrCode, sessionIDStr, ipAddressStr)
 	if err != nil {
+		var rateLimitErr *services.ConversationRateLimitError
+		switch {
+		case errors.As(err, &rateLimitErr):
+			// DAILY_LIMIT
+			if rateLimitErr.Reason == "DAILY_LIMIT" {
+                c.JSON(http.StatusTooManyRequests, models.ErrorResponse{
+                    Error: "you have reached the daily message limit for this QR",
+                    Code:  "daily_limit_exceeded",
+                })
+                return
+            }
+
+			// COOLDOWN
+			if rateLimitErr.RetryAfter > 0 {
+				c.Header("Retry-After", strconv.FormatInt(int64(rateLimitErr.RetryAfter/time.Second), 10))
+			}
+			c.JSON(http.StatusTooManyRequests, models.ErrorResponse{
+				Error: "you are creating conversations too quickly, please try again later",
+				Code:  "rate_limited",
+			})
+			return
+		case errors.Is(err, services.ErrMessageServiceUnavailable):
+			c.JSON(http.StatusServiceUnavailable, models.ErrorResponse{
+				Error: "message service temporarily unavailable",
+				Code:  "service_unavailable",
+			})
+			return
+		}
+
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
 			Error:  "failed to create conversation",
 			Code:   "database_error",

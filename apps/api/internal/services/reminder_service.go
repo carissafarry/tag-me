@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/carissafarry/tag-me/api/internal/models"
+	"github.com/carissafarry/tag-me/api/internal/repository"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -43,18 +44,40 @@ type ConversationLookupRepository interface {
 }
 
 type ReminderService struct {
-	db           *pgxpool.Pool
-	reminders    ReminderRepository
-	messages     MessageStateRepository
-	cooldowns    CooldownRepository
-	ipRateLimits IPRateLimiter
-	enqueue      NotificationEnqueuer
-	config       ReminderConfig
-	now          func() time.Time
+	conversations ConversationLookupRepository
+	reminders     ReminderRepository
+	messages      MessageStateRepository
+	cooldowns     CooldownRepository
+	ipRateLimits  IPRateLimiter
+	enqueue       NotificationEnqueuer
+	config        ReminderConfig
+	now           func() time.Time
 }
 
 func NewReminderService(
 	db *pgxpool.Pool,
+	reminders ReminderRepository,
+	messages MessageStateRepository,
+	cooldowns CooldownRepository,
+	ipRateLimits IPRateLimiter,
+	enqueue NotificationEnqueuer,
+	config *ReminderConfig,
+	now func() time.Time,
+) *ReminderService {
+	return NewReminderServiceWithConversationRepository(
+		repository.NewConversationRepository(db),
+		reminders,
+		messages,
+		cooldowns,
+		ipRateLimits,
+		enqueue,
+		config,
+		now,
+	)
+}
+
+func NewReminderServiceWithConversationRepository(
+	conversations ConversationLookupRepository,
 	reminders ReminderRepository,
 	messages MessageStateRepository,
 	cooldowns CooldownRepository,
@@ -94,14 +117,14 @@ func NewReminderService(
 	}
 
 	return &ReminderService{
-		db:           db,
-		reminders:    reminders,
-		messages:     messages,
-		cooldowns:    cooldowns,
-		ipRateLimits: ipRateLimits,
-		enqueue:      enqueue,
-		config:       finalConfig,
-		now:          now,
+		conversations: conversations,
+		reminders:     reminders,
+		messages:      messages,
+		cooldowns:     cooldowns,
+		ipRateLimits:  ipRateLimits,
+		enqueue:       enqueue,
+		config:        finalConfig,
+		now:           now,
 	}
 }
 
