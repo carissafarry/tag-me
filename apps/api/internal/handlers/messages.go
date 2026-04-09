@@ -1,7 +1,11 @@
 package handlers
 
 import (
+	"context"
+	"errors"
 	"net/http"
+	"strconv"
+	"time"
 
 	"github.com/carissafarry/tag-me/api/internal/middleware"
 	"github.com/carissafarry/tag-me/api/internal/models"
@@ -9,12 +13,24 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+type MessageTracker interface {
+	TrackMessage(ctx context.Context, sessionID string, qrID string, now time.Time) (*models.MessageState, error)
+}
+
 type MessageHandler struct {
-	service *services.MessageService
+	service        *services.MessageService
+	messageTracker MessageTracker
 }
 
 func NewMessageHandler(service *services.MessageService) *MessageHandler {
 	return &MessageHandler{service: service}
+}
+
+func NewMessageHandlerWithTracker(service *services.MessageService, messageTracker MessageTracker) *MessageHandler {
+	return &MessageHandler{
+		service:        service,
+		messageTracker: messageTracker,
+	}
 }
 
 // CreateMessage handles POST /messages
@@ -35,11 +51,8 @@ func (h *MessageHandler) CreateMessage(c *gin.Context) {
 	}
 
 	// Get session metadata from context (set by middleware)
-	sessionID, _ := c.Get(middleware.SessionIDKey)
-	ipAddress, _ := c.Get(middleware.IPAddressKey)
-
-	sessionIDStr := sessionID.(string)
-	ipAddressStr := ipAddress.(string)
+	sessionIDStr := contextString(c, middleware.SessionIDKey)
+	ipAddressStr := contextString(c, middleware.IPAddressKey)
 
 	// Convert empty IP to nil (database INET type doesn't accept empty strings)
 	var ipAddressPtr *string
@@ -90,13 +103,23 @@ func (h *MessageHandler) CreateMessage(c *gin.Context) {
 		return
 	}
 
+	if h.messageTracker != nil {
+		if _, err := h.messageTracker.TrackMessage(c.Request.Context(), sessionIDStr, qrCode.ID.String(), time.Now().UTC()); err != nil {
+			c.JSON(http.StatusServiceUnavailable, models.ErrorResponse{
+				Error: "message tracking temporarily unavailable",
+				Code:  "service_unavailable",
+			})
+			return
+		}
+	}
+
 	// Return response with conversation ID for status tracking
 	// Exclude owner contact and session metadata
 	response := models.CreateMessageResponse{
 		ConversationID: conversation.ID.String(),
 		MessageID:      message.ID.String(),
 		Status:         conversation.Status,
-		CreatedAt:      message.CreatedAt.Format("2006-01-02 15:04:05"),
+		CreatedAt:      formatJakartaRFC3339(message.CreatedAt),
 	}
 
 	c.JSON(http.StatusCreated, response)
@@ -128,7 +151,7 @@ func (h *MessageHandler) GetConversationStatus(c *gin.Context) {
 	response := models.ConversationStatusResponse{
 		ConversationID: conversation.ID.String(),
 		Status:         conversation.Status,
-		CreatedAt:      conversation.CreatedAt.Format("2006-01-02 15:04:05"),
+		CreatedAt:      formatJakartaRFC3339(conversation.CreatedAt),
 	}
 
 	c.JSON(http.StatusOK, response)
