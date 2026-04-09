@@ -44,7 +44,7 @@ type reminderTestDeps struct {
 	router             *gin.Engine
 	conversationID     string
 	qrID               string
-	messageRepository  *repository.MessageRepository
+	messageStateRepo   *repository.MessageStateRepository
 	reminderRepository *repository.ReminderRepository
 	cooldownRepository *repository.CooldownRepository
 	ipRateLimiter      *repository.IPRateLimiter
@@ -62,7 +62,7 @@ func setupReminderTestDeps(t *testing.T, now time.Time, config *services.Reminde
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = client.Close() })
 
-	messageRepository := repository.NewMessageRepository(client, 6*time.Hour)
+	messageStateRepository := repository.NewMessageStateRepository(client, 6*time.Hour)
 	cooldownRepository := repository.NewCooldownRepository(client)
 	reminderRepository := repository.NewReminderRepository(client, 6*time.Hour, cooldownRepository)
 	ipRateLimiter := repository.NewIPRateLimiter(client, 10*time.Minute)
@@ -71,7 +71,7 @@ func setupReminderTestDeps(t *testing.T, now time.Time, config *services.Reminde
 	service := services.NewReminderService(
 		db,
 		reminderRepository,
-		messageRepository,
+		messageStateRepository,
 		cooldownRepository,
 		ipRateLimiter,
 		notifier.Enqueue,
@@ -108,7 +108,7 @@ func setupReminderTestDeps(t *testing.T, now time.Time, config *services.Reminde
 		router:             router,
 		conversationID:     conversationID.String(),
 		qrID:               qrCodeID.String(),
-		messageRepository:  messageRepository,
+		messageStateRepo:   messageStateRepository,
 		reminderRepository: reminderRepository,
 		cooldownRepository: cooldownRepository,
 		ipRateLimiter:      ipRateLimiter,
@@ -151,14 +151,14 @@ func decodeReminderResponse(t *testing.T, recorder *httptest.ResponseRecorder) m
 func TestReminderEndpointSuccess(t *testing.T) {
 	now := time.Date(2026, 4, 9, 8, 0, 0, 0, time.UTC)
 	deps := setupReminderTestDeps(t, now, &services.ReminderConfig{
-		Cooldown:                2 * time.Minute,
-		MaxReminders:            3,
+		Cooldown:                  2 * time.Minute,
+		MaxReminders:              3,
 		MaxMessagesPerSessionQR: 5,
-		IPWindowLimit:           10,
+		IPWindowLimit:             10,
 	})
 
 	sessionID := "session-success"
-	if _, err := deps.messageRepository.TrackMessage(context.Background(), sessionID, deps.qrID, now.Add(-time.Minute)); err != nil {
+	if _, err := deps.messageStateRepo.TrackMessage(context.Background(), sessionID, deps.qrID, now.Add(-time.Minute)); err != nil {
 		t.Fatalf("failed to seed message state: %v", err)
 	}
 
@@ -188,14 +188,14 @@ func TestReminderEndpointSuccess(t *testing.T) {
 func TestReminderEndpointCooldown(t *testing.T) {
 	now := time.Date(2026, 4, 9, 8, 0, 0, 0, time.UTC)
 	deps := setupReminderTestDeps(t, now, &services.ReminderConfig{
-		Cooldown:                2 * time.Minute,
-		MaxReminders:            3,
+		Cooldown:                  2 * time.Minute,
+		MaxReminders:              3,
 		MaxMessagesPerSessionQR: 5,
-		IPWindowLimit:           10,
+		IPWindowLimit:             10,
 	})
 
 	sessionID := "session-cooldown"
-	if _, err := deps.messageRepository.TrackMessage(context.Background(), sessionID, deps.qrID, now.Add(-time.Minute)); err != nil {
+	if _, err := deps.messageStateRepo.TrackMessage(context.Background(), sessionID, deps.qrID, now.Add(-time.Minute)); err != nil {
 		t.Fatalf("failed to seed message state: %v", err)
 	}
 	if _, err := deps.reminderRepository.ReserveReminder(context.Background(), sessionID, deps.qrID, now.Add(-time.Minute), 2*time.Minute, 3); err != nil {
@@ -219,14 +219,14 @@ func TestReminderEndpointCooldown(t *testing.T) {
 func TestReminderEndpointLimitReached(t *testing.T) {
 	now := time.Date(2026, 4, 9, 8, 0, 0, 0, time.UTC)
 	deps := setupReminderTestDeps(t, now, &services.ReminderConfig{
-		Cooldown:                2 * time.Minute,
-		MaxReminders:            3,
+		Cooldown:                  2 * time.Minute,
+		MaxReminders:              3,
 		MaxMessagesPerSessionQR: 5,
-		IPWindowLimit:           10,
+		IPWindowLimit:             10,
 	})
 
 	sessionID := "session-limit"
-	if _, err := deps.messageRepository.TrackMessage(context.Background(), sessionID, deps.qrID, now.Add(-time.Minute)); err != nil {
+	if _, err := deps.messageStateRepo.TrackMessage(context.Background(), sessionID, deps.qrID, now.Add(-time.Minute)); err != nil {
 		t.Fatalf("failed to seed message state: %v", err)
 	}
 
@@ -251,15 +251,15 @@ func TestReminderEndpointLimitReached(t *testing.T) {
 func TestReminderEndpointMessageRateLimited(t *testing.T) {
 	now := time.Date(2026, 4, 9, 8, 0, 0, 0, time.UTC)
 	deps := setupReminderTestDeps(t, now, &services.ReminderConfig{
-		Cooldown:                2 * time.Minute,
-		MaxReminders:            3,
+		Cooldown:                  2 * time.Minute,
+		MaxReminders:              3,
 		MaxMessagesPerSessionQR: 2,
-		IPWindowLimit:           10,
+		IPWindowLimit:             10,
 	})
 
 	sessionID := "session-msg-limit"
 	for i := 0; i < 2; i++ {
-		if _, err := deps.messageRepository.TrackMessage(context.Background(), sessionID, deps.qrID, now.Add(-time.Duration(i+1)*time.Minute)); err != nil {
+		if _, err := deps.messageStateRepo.TrackMessage(context.Background(), sessionID, deps.qrID, now.Add(-time.Duration(i+1)*time.Minute)); err != nil {
 			t.Fatalf("failed to seed message state: %v", err)
 		}
 	}
@@ -278,14 +278,14 @@ func TestReminderEndpointMessageRateLimited(t *testing.T) {
 func TestReminderEndpointIPRateLimited(t *testing.T) {
 	now := time.Date(2026, 4, 9, 8, 0, 0, 0, time.UTC)
 	deps := setupReminderTestDeps(t, now, &services.ReminderConfig{
-		Cooldown:                2 * time.Minute,
-		MaxReminders:            3,
+		Cooldown:                  2 * time.Minute,
+		MaxReminders:              3,
 		MaxMessagesPerSessionQR: 5,
-		IPWindowLimit:           1,
+		IPWindowLimit:             1,
 	})
 
 	sessionID := "session-ip-limit"
-	if _, err := deps.messageRepository.TrackMessage(context.Background(), sessionID, deps.qrID, now.Add(-time.Minute)); err != nil {
+	if _, err := deps.messageStateRepo.TrackMessage(context.Background(), sessionID, deps.qrID, now.Add(-time.Minute)); err != nil {
 		t.Fatalf("failed to seed message state: %v", err)
 	}
 

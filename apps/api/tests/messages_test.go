@@ -6,17 +6,21 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
-	// "time"
+	"time"
 
+	"github.com/alicebob/miniredis/v2"
 	"github.com/carissafarry/tag-me/api/internal/handlers"
 	"github.com/carissafarry/tag-me/api/internal/middleware"
 	"github.com/carissafarry/tag-me/api/internal/models"
+	"github.com/carissafarry/tag-me/api/internal/repository"
 	"github.com/carissafarry/tag-me/api/internal/services"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/redis/go-redis/v9"
 )
 
 // setupTestDB creates a test database connection and cleans up tables
@@ -292,7 +296,7 @@ func TestConversationAndMessageCreation(t *testing.T) {
 	}
 
 	// Create conversation
-	conversation, err := service.CreateConversation(context.Background(), qrCode)
+	conversation, err := service.CreateConversation(context.Background(), qrCode, "session-create-conversation", "203.0.113.1")
 	if err != nil {
 		t.Fatalf("Failed to create conversation: %v", err)
 	}
@@ -338,6 +342,355 @@ func TestConversationAndMessageCreation(t *testing.T) {
 	}
 	if message.MessageType != "photo" {
 		t.Errorf("expected message_type 'photo', got %s", message.MessageType)
+	}
+}
+
+type guardedMessageTestDeps struct {
+	db           *pgxpool.Pool
+	router       *gin.Engine
+	redis        *miniredis.Miniredis
+	messageState *repository.MessageStateRepository
+	qrToken      string
+	qrCodeID     string
+}
+
+func setupGuardedMessageTestDeps(t *testing.T, cooldown time.Duration) *guardedMessageTestDeps {
+	t.Helper()
+
+	db := setupTestDB(t)
+	t.Cleanup(db.Close)
+
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	messageStateRepository := repository.NewMessageStateRepository(client, 6*time.Hour)
+
+	service := services.NewMessageServiceWithDependencies(
+		repository.NewQRCodeRepository(db),
+		repository.NewConversationRepository(db),
+		repository.NewMessageRepository(db),
+		messageStateRepository,
+		repository.NewConversationCreationGuardRepository(client),
+		&services.MessageConfig{
+			ConversationCreationCooldown: cooldown,
+			MaxMessagesPerSessionQR:    5,
+		},
+	)
+	handler := handlers.NewMessageHandlerWithTracker(service, messageStateRepository)
+
+	router := gin.New()
+	router.Use(middleware.SessionTracking())
+	router.POST("/messages", handler.CreateMessage)
+
+	ownerID := uuid.New()
+	qrCodeID := uuid.New()
+	qrToken := "guarded-token-" + uuid.New().String()
+
+	_, err := db.Exec(context.Background(), `
+		INSERT INTO qr_codes (id, owner_id, qr_token, object_type, object_id, is_active)
+		VALUES ($1, $2, $3, $4, $5, true)
+	`, qrCodeID, ownerID, qrToken, "link", uuid.New())
+	if err != nil {
+		t.Fatalf("Failed to insert test QR code: %v", err)
+	}
+
+	return &guardedMessageTestDeps{
+		db:           db,
+		router:       router,
+		redis:        mr,
+		messageState: messageStateRepository,
+		qrToken:      qrToken,
+		qrCodeID:     qrCodeID.String(),
+	}
+}
+
+func performCreateMessageRequest(
+	t *testing.T,
+	router *gin.Engine,
+	qrToken string,
+	sessionID string,
+	ipAddress string,
+) *httptest.ResponseRecorder {
+	t.Helper()
+
+	payload := map[string]interface{}{
+		"qr_token":     qrToken,
+		"message_type": "text",
+		"content":      "scanner message",
+	}
+
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("failed to marshal payload: %v", err)
+	}
+
+	req, err := http.NewRequest("POST", "/messages", strings.NewReader(string(payloadBytes)))
+	if err != nil {
+		t.Fatalf("failed to build request: %v", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Forwarded-For", ipAddress)
+	req.Header.Set("X-Session-ID", sessionID)
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+	return recorder
+}
+
+func countRows(t *testing.T, db *pgxpool.Pool, table string) int {
+	t.Helper()
+
+	var count int
+	err := db.QueryRow(context.Background(), "SELECT COUNT(*) FROM "+table).Scan(&count)
+	if err != nil {
+		t.Fatalf("failed to count rows in %s: %v", table, err)
+	}
+
+	return count
+}
+
+func insertGuardedQRToken(t *testing.T, db *pgxpool.Pool) string {
+	t.Helper()
+
+	ownerID := uuid.New()
+	qrCodeID := uuid.New()
+	qrToken := "guarded-token-" + uuid.New().String()
+
+	_, err := db.Exec(context.Background(), `
+		INSERT INTO qr_codes (id, owner_id, qr_token, object_type, object_id, is_active)
+		VALUES ($1, $2, $3, $4, $5, true)
+	`, qrCodeID, ownerID, qrToken, "link", uuid.New())
+	if err != nil {
+		t.Fatalf("Failed to insert test QR code: %v", err)
+	}
+
+	return qrToken
+}
+
+func TestCreateMessageRejectsDuplicateConversationWithinCooldown(t *testing.T) {
+	deps := setupGuardedMessageTestDeps(t, time.Minute)
+
+	first := performCreateMessageRequest(t, deps.router, deps.qrToken, "session-dup", "203.0.113.20")
+	if first.Code != http.StatusCreated {
+		t.Fatalf("expected first request status 201, got %d: %s", first.Code, first.Body.String())
+	}
+
+	second := performCreateMessageRequest(t, deps.router, deps.qrToken, "session-dup", "203.0.113.20")
+	if second.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected second request status 429, got %d: %s", second.Code, second.Body.String())
+	}
+
+	var response models.ErrorResponse
+	if err := json.Unmarshal(second.Body.Bytes(), &response); err != nil {
+		t.Fatalf("failed to decode error response: %v", err)
+	}
+
+	if response.Code != "rate_limited" {
+		t.Fatalf("expected code rate_limited, got %s", response.Code)
+	}
+	if response.Error != "you have reached the limit for creating conversations, please try again later" {
+		t.Fatalf("unexpected error message: %s", response.Error)
+	}
+	if second.Header().Get("Retry-After") == "" {
+		t.Fatal("expected Retry-After header to be set")
+	}
+
+	if countRows(t, deps.db, "conversations") != 1 {
+		t.Fatalf("expected exactly 1 conversation row after duplicate request")
+	}
+	if countRows(t, deps.db, "messages") != 1 {
+		t.Fatalf("expected exactly 1 message row after duplicate request")
+	}
+}
+
+func TestCreateMessageAllowsSameSessionAndIPForDifferentQR(t *testing.T) {
+	deps := setupGuardedMessageTestDeps(t, time.Minute)
+	secondQRToken := insertGuardedQRToken(t, deps.db)
+
+	first := performCreateMessageRequest(t, deps.router, deps.qrToken, "session-same-qr-scope", "203.0.113.21")
+	if first.Code != http.StatusCreated {
+		t.Fatalf("expected first request status 201, got %d: %s", first.Code, first.Body.String())
+	}
+
+	second := performCreateMessageRequest(t, deps.router, secondQRToken, "session-same-qr-scope", "203.0.113.21")
+	if second.Code != http.StatusCreated {
+		t.Fatalf("expected second request status 201, got %d: %s", second.Code, second.Body.String())
+	}
+
+	if countRows(t, deps.db, "conversations") != 2 {
+		t.Fatalf("expected 2 conversations for different QR tokens")
+	}
+	if countRows(t, deps.db, "messages") != 2 {
+		t.Fatalf("expected 2 messages for different QR tokens")
+	}
+}
+
+func TestCreateMessageAllowsSameSessionWithDifferentIP(t *testing.T) {
+	deps := setupGuardedMessageTestDeps(t, time.Minute)
+
+	first := performCreateMessageRequest(t, deps.router, deps.qrToken, "session-same-different-ip", "203.0.113.22")
+	if first.Code != http.StatusCreated {
+		t.Fatalf("expected first request status 201, got %d: %s", first.Code, first.Body.String())
+	}
+
+	second := performCreateMessageRequest(t, deps.router, deps.qrToken, "session-same-different-ip", "203.0.113.23")
+	if second.Code != http.StatusCreated {
+		t.Fatalf("expected second request status 201, got %d: %s", second.Code, second.Body.String())
+	}
+
+	if countRows(t, deps.db, "conversations") != 2 {
+		t.Fatalf("expected 2 conversations when IP changes")
+	}
+	if countRows(t, deps.db, "messages") != 2 {
+		t.Fatalf("expected 2 messages when IP changes")
+	}
+}
+
+func TestCreateMessageAllowsSameIPWithDifferentSession(t *testing.T) {
+	deps := setupGuardedMessageTestDeps(t, time.Minute)
+
+	first := performCreateMessageRequest(t, deps.router, deps.qrToken, "session-a", "203.0.113.24")
+	if first.Code != http.StatusCreated {
+		t.Fatalf("expected first request status 201, got %d: %s", first.Code, first.Body.String())
+	}
+
+	second := performCreateMessageRequest(t, deps.router, deps.qrToken, "session-b", "203.0.113.24")
+	if second.Code != http.StatusCreated {
+		t.Fatalf("expected second request status 201, got %d: %s", second.Code, second.Body.String())
+	}
+
+	if countRows(t, deps.db, "conversations") != 2 {
+		t.Fatalf("expected 2 conversations when session changes")
+	}
+	if countRows(t, deps.db, "messages") != 2 {
+		t.Fatalf("expected 2 messages when session changes")
+	}
+}
+
+func TestCreateMessageAllowsRequestAfterCooldownExpires(t *testing.T) {
+	deps := setupGuardedMessageTestDeps(t, time.Second)
+
+	first := performCreateMessageRequest(t, deps.router, deps.qrToken, "session-expiry", "203.0.113.25")
+	if first.Code != http.StatusCreated {
+		t.Fatalf("expected first request status 201, got %d: %s", first.Code, first.Body.String())
+	}
+
+	deps.redis.FastForward(2 * time.Second)
+
+	second := performCreateMessageRequest(t, deps.router, deps.qrToken, "session-expiry", "203.0.113.25")
+	if second.Code != http.StatusCreated {
+		t.Fatalf("expected second request status 201 after cooldown, got %d: %s", second.Code, second.Body.String())
+	}
+
+	if countRows(t, deps.db, "conversations") != 2 {
+		t.Fatalf("expected 2 conversations after cooldown expires")
+	}
+	if countRows(t, deps.db, "messages") != 2 {
+		t.Fatalf("expected 2 messages after cooldown expires")
+	}
+}
+
+func TestCreateMessageRejectsConcurrentDuplicateConversationCreation(t *testing.T) {
+	deps := setupGuardedMessageTestDeps(t, time.Minute)
+
+	const attempts = 8
+	statuses := make([]int, attempts)
+	var wg sync.WaitGroup
+
+	for i := 0; i < attempts; i++ {
+		wg.Add(1)
+		go func(index int) {
+			defer wg.Done()
+			recorder := performCreateMessageRequest(t, deps.router, deps.qrToken, "session-concurrent", "203.0.113.26")
+			statuses[index] = recorder.Code
+		}(i)
+	}
+
+	wg.Wait()
+
+	successCount := 0
+	rateLimitedCount := 0
+	for _, status := range statuses {
+		if status == http.StatusCreated {
+			successCount++
+		}
+		if status == http.StatusTooManyRequests {
+			rateLimitedCount++
+		}
+	}
+
+	if successCount != 1 {
+		t.Fatalf("expected exactly 1 successful request, got %d", successCount)
+	}
+	if rateLimitedCount != attempts-1 {
+		t.Fatalf("expected %d rate-limited requests, got %d", attempts-1, rateLimitedCount)
+	}
+	if countRows(t, deps.db, "conversations") != 1 {
+		t.Fatalf("expected exactly 1 conversation after concurrent duplicate requests")
+	}
+	if countRows(t, deps.db, "messages") != 1 {
+		t.Fatalf("expected exactly 1 message after concurrent duplicate requests")
+	}
+}
+
+func TestCreateMessageReturnsServiceUnavailableWhenGuardStoreIsDown(t *testing.T) {
+	deps := setupGuardedMessageTestDeps(t, time.Minute)
+	deps.redis.Close()
+
+	recorder := performCreateMessageRequest(t, deps.router, deps.qrToken, "session-redis-down", "203.0.113.27")
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected status 503, got %d: %s", recorder.Code, recorder.Body.String())
+	}
+
+	var response models.ErrorResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("failed to decode error response: %v", err)
+	}
+
+	if response.Code != "service_unavailable" {
+		t.Fatalf("expected code service_unavailable, got %s", response.Code)
+	}
+	if response.Error != "message service temporarily unavailable" {
+		t.Fatalf("unexpected error message: %s", response.Error)
+	}
+	if countRows(t, deps.db, "conversations") != 0 {
+		t.Fatalf("expected no conversation rows when guard store is unavailable")
+	}
+	if countRows(t, deps.db, "messages") != 0 {
+		t.Fatalf("expected no message rows when guard store is unavailable")
+	}
+}
+
+func TestCreateMessageRejectsWhenMessageLimitReached(t *testing.T) {
+	deps := setupGuardedMessageTestDeps(t, time.Minute)
+	sessionID := "session-maxed"
+	ipAddress := "203.0.113.28"
+
+	for i := 0; i < 5; i++ {
+		if _, err := deps.messageState.TrackMessage(context.Background(), sessionID, deps.qrCodeID, time.Now().UTC()); err != nil {
+			t.Fatalf("failed to seed message state: %v", err)
+		}
+	}
+
+	recorder := performCreateMessageRequest(t, deps.router, deps.qrToken, sessionID, ipAddress)
+	if recorder.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected status 429, got %d: %s", recorder.Code, recorder.Body.String())
+	}
+
+	var response models.ErrorResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("failed to decode error response: %v", err)
+	}
+
+	if response.Code != "rate_limited" {
+		t.Fatalf("expected code rate_limited, got %s", response.Code)
+	}
+	if countRows(t, deps.db, "conversations") != 0 {
+		t.Fatalf("expected no conversation rows when message limit is reached")
+	}
+	if countRows(t, deps.db, "messages") != 0 {
+		t.Fatalf("expected no message rows when message limit is reached")
 	}
 }
 
