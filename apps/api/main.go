@@ -55,6 +55,7 @@ func main() {
 	// Routes
 	router.POST("/messages", messageHandler.CreateMessage)
 	router.GET("/conversations/:id/status", messageHandler.GetConversationStatus)
+	router.POST("/conversations/:id/reminder", reminderHandler.CreateReminder)
 
 	// Health check
 	router.GET("/health", func(c *gin.Context) {

@@ -38,6 +38,10 @@ type ReminderConfig struct {
 	IPWindowLimit           int
 }
 
+type ConversationLookupRepository interface {
+	FindByID(ctx context.Context, conversationID string) (*models.Conversation, error)
+}
+
 type ReminderService struct {
 	db           *pgxpool.Pool
 	reminders    ReminderRepository
@@ -116,7 +120,7 @@ func (s *ReminderService) SendReminder(ctx context.Context, request models.Remin
 		}, nil
 	}
 
-	conversation, err := s.getConversation(ctx, request.ConversationID)
+	conversation, err := s.conversations.FindByID(ctx, request.ConversationID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return &models.ReminderResult{
@@ -222,27 +226,4 @@ func (s *ReminderService) SendReminder(ctx context.Context, request models.Remin
 	default:
 		return nil, fmt.Errorf("unexpected reservation reason: %s", reservation.Reason)
 	}
-}
-
-func (s *ReminderService) getConversation(ctx context.Context, conversationID string) (*models.Conversation, error) {
-	conversation := &models.Conversation{}
-
-	err := s.db.QueryRow(
-		ctx,
-		`SELECT id, qr_code_id, status, created_at, updated_at
-		 FROM conversations
-		 WHERE id = $1`,
-		conversationID,
-	).Scan(
-		&conversation.ID,
-		&conversation.QRCodeID,
-		&conversation.Status,
-		&conversation.CreatedAt,
-		&conversation.UpdatedAt,
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	return conversation, nil
 }
