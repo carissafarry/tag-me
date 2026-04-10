@@ -33,6 +33,22 @@ export interface ConversationStatusResponse {
   conversation_id: string;
   status: ConversationLifecycleStatus;
   created_at: string;
+  can_follow_up: boolean;
+  remaining_reminder?: number;
+}
+
+export interface ScanResponse {
+  plate?: string;
+  conversation_id?: string;
+  has_active: boolean;
+}
+
+export interface ReminderResponse {
+  success: boolean;
+  message?: string;
+  reason?: string;
+  remaining_reminder?: number;
+  next_allowed_at?: string;
 }
 
 export interface ApiErrorPayload {
@@ -131,6 +147,7 @@ class ApiClient {
 
     const response = await fetch(`${this.baseUrl}${path}`, {
       cache: "no-store",
+      credentials: "include",
       ...options,
       headers,
     });
@@ -188,6 +205,12 @@ export function getApiUrl(path: string) {
   return buildApiUrl(path);
 }
 
+export function getScanInfo(token: string) {
+  return apiClient.get<ScanResponse>(
+    `/scan?token=${encodeURIComponent(token)}`,
+  );
+}
+
 export function sendMessage(payload: SendMessagePayload) {
   return apiClient.post<CreateMessageResponse>("/messages", payload);
 }
@@ -195,5 +218,11 @@ export function sendMessage(payload: SendMessagePayload) {
 export function getConversationStatus(conversationId: string) {
   return apiClient.get<ConversationStatusResponse>(
     `/conversations/${encodeURIComponent(conversationId)}/status`,
+  );
+}
+
+export function sendReminder(conversationId: string) {
+  return apiClient.post<ReminderResponse>(
+    `/conversations/${encodeURIComponent(conversationId)}/reminder`,
   );
 }

@@ -48,6 +48,7 @@ type QRCodeRepository interface {
 type ConversationRepository interface {
 	Create(ctx context.Context, conversation *models.Conversation) (*models.Conversation, error)
 	FindByID(ctx context.Context, conversationID string) (*models.Conversation, error)
+	FindActiveBySessionAndQR(ctx context.Context, sessionID string, qrCodeID string) (*models.Conversation, error)
 }
 
 type MessageRepository interface {
@@ -243,4 +244,10 @@ func (s *MessageService) GetConversationStatus(ctx context.Context, conversation
 	}
 
 	return conv, nil
+}
+
+// FindActiveConversationBySessionAndQR finds the latest active conversation for a session+QR pair
+// Used in /scan to detect if the user already has an ongoing conversation
+func (s *MessageService) FindActiveConversationBySessionAndQR(ctx context.Context, sessionID string, qrCodeID string) (*models.Conversation, error) {
+	return s.conversations.FindActiveBySessionAndQR(ctx, sessionID, qrCodeID)
 }
