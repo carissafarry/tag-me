@@ -42,6 +42,7 @@ CREATE TABLE qr_codes (
     object_type VARCHAR(100) NOT NULL,
     object_id UUID NOT NULL,
     is_active BOOLEAN NOT NULL DEFAULT true,
+    plate VARCHAR(10) UNIQUE,
     created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT date_trunc('second', NOW() AT TIME ZONE 'Asia/Jakarta'),
     updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT date_trunc('second', NOW() AT TIME ZONE 'Asia/Jakarta')
 );
