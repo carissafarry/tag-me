@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   AlertTriangle,
@@ -19,6 +19,7 @@ import {
 
 import {
   getApiErrorMessage,
+  getScanInfo,
   sendMessage,
   type ScannerMessageType,
 } from "@/lib/api";
@@ -67,6 +68,38 @@ export default function TagMePage() {
   const [error, setError] = useState<string | null>(null);
 
   const qrToken = searchParams.get("token")?.trim() ?? "";
+  const [plate, setPlate] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!qrToken) {
+      setError("No QR token found. Please scan a valid QR code.");
+      window.setTimeout(() => setError(null), 5000);
+      return;
+    }
+
+    let cancelled = false;
+
+    getScanInfo(qrToken)
+      .then((data) => {
+        if (cancelled) return;
+        setPlate(data.plate ?? null);
+
+        if (data.has_active && data.conversation_id) {
+          router.push(`/conversations/${data.conversation_id}`);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setError("QR code not found or inactive. Please scan again.");
+          window.setTimeout(() => setError(null), 5000);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [qrToken, router]);
+
   const selectedMessageConfig = useMemo(
     () => messages.find((msg) => msg.id === selectedMessage) ?? null,
     [selectedMessage],
@@ -130,6 +163,28 @@ export default function TagMePage() {
 
   return (
     <div className="flex min-h-dvh flex-col bg-gray-50">
+      {error && (
+        <div className="fixed top-4 left-4 right-4 sm:left-auto sm:right-4 sm:w-96 z-50 animate-in fade-in slide-in-from-top-2 duration-300">
+          <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900 shadow-lg flex items-center gap-3">
+            <AlertTriangle className="h-5 w-5 shrink-0" />
+            <span className="flex-1">{error}</span>
+            <button
+              type="button"
+              onClick={() => setError(null)}
+              className="text-red-700 hover:text-red-900 transition"
+            >
+              <span className="sr-only">Dismiss</span>
+              <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 20 20">
+                <path
+                  fillRule="evenodd"
+                  d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z"
+                  clipRule="evenodd"
+                />
+              </svg>
+            </button>
+          </div>
+        </div>
+      )}
       <header className="border-b border-gray-200 bg-white px-4 py-4 shadow-sm md:px-6 lg:hidden">
         <div className="mx-auto flex w-full max-w-4xl items-center justify-between">
           <div className="flex items-center gap-2">
@@ -207,9 +262,7 @@ export default function TagMePage() {
                 </p>
                 <div className="mx-auto max-w-[240px] rounded-2xl border-2 border-gray-800 bg-white px-6 py-4">
                   <p className="text-center text-2xl font-bold tracking-widest md:text-3xl">
-                    {searchParams.get("plate")?.trim() || "ABC -"}
-                    <br />
-                    {searchParams.get("suffix")?.trim() || "1234"}
+                    {plate || "Loading..."}
                   </p>
                 </div>
                 <div className="mt-4 flex items-center justify-center gap-1 text-yellow-600">
@@ -273,11 +326,6 @@ export default function TagMePage() {
                 </section>
               ) : null}
 
-              {error ? (
-                <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-                  {error}
-                </div>
-              ) : null}
             </div>
 
             <div className="space-y-6">
@@ -332,7 +380,7 @@ export default function TagMePage() {
                     disabled={!canSubmit}
                     className={`w-full rounded-2xl px-4 py-4 transition-colors active:scale-[0.99] ${
                       canSubmit
-                        ? "bg-yellow-400 text-gray-900 hover:bg-yellow-500"
+                        ? "bg-yellow-400 text-gray-900 hover:bg-yellow-500 cursor-pointer"
                         : "cursor-not-allowed bg-yellow-200 text-gray-500"
                     }`}
                   >

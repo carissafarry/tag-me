@@ -20,7 +20,7 @@ interface FollowUpScreenProps {
 }
 
 export default function FollowUpScreen({
-  vehiclePlate = "ABC-1234",
+  vehiclePlate = "Unknown vehicle",
   sessionStatus = "recognized",
 }: FollowUpScreenProps) {
   const [message, setMessage] = useState("");

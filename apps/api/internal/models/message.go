@@ -39,6 +39,7 @@ type QRCode struct {
 	ObjectType string    `json:"-"`
 	ObjectID   uuid.UUID `json:"-"`
 	IsActive   bool      `json:"-"`
+	Plate      *string   `json:"-"`
 	CreatedAt  time.Time `json:"-"`
 	UpdatedAt  time.Time `json:"-"`
 }
@@ -66,6 +67,14 @@ type ConversationStatusResponse struct {
 	ConversationID string `json:"conversation_id"`
 	Status         string `json:"status"`
 	CreatedAt      string `json:"created_at"`
+	CanFollowUp    bool   `json:"can_follow_up"`
+}
+
+// ScanResponse is returned by GET /scan?token=xxx
+type ScanResponse struct {
+	Plate          *string `json:"plate,omitempty"`
+	ConversationID *string `json:"conversation_id,omitempty"`
+	HasActive      bool    `json:"has_active"`
 }
 
 // ErrorResponse is a safe error returned to scanner clients
