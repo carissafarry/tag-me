@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  AlertCircle,
   ArrowLeft,
   ArrowRight,
   Bell,
@@ -20,6 +21,7 @@ import {
 import {
   getConversationStatus,
   isApiError,
+  sendReminder,
   type ConversationStatusResponse,
 } from "@/lib/api";
 import {
@@ -49,6 +51,11 @@ export default function ConversationStatusPage() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [lastCheckedAt, setLastCheckedAt] = useState<Date | null>(null);
   const [isCopied, setIsCopied] = useState(false);
+  const [isReminderLoading, setIsReminderLoading] = useState(false);
+  const [reminderNotification, setReminderNotification] = useState<{
+    type: "success" | "error";
+    message: string;
+  } | null>(null);
 
   const refreshStatus = useCallback(
     async (options?: { silent?: boolean }) => {
@@ -121,6 +128,61 @@ export default function ConversationStatusPage() {
     }
   }, []);
 
+  const handleSendReminder = useCallback(async () => {
+    if (!conversationId) {
+      setReminderNotification({
+        type: "error",
+        message: "Conversation ID is missing.",
+      });
+      return;
+    }
+
+    setIsReminderLoading(true);
+    setReminderNotification(null);
+
+    try {
+      const response = await sendReminder(conversationId);
+
+      if (!response.success) {
+        const errorMessage =
+          response.reason === "cooldown"
+            ? "Please wait before sending another reminder."
+            : response.reason === "limit_reached"
+              ? "You have reached the reminder limit for this conversation."
+              : response.reason === "already_sent"
+                ? response.message || "Reminder already sent"
+                : "Your daily limit has been reached. Please try again later.";
+
+        setReminderNotification({
+          type: "error",
+          message: errorMessage,
+        });
+      } else {
+        // Show success notification
+        setReminderNotification({
+          type: "success",
+          message: "Reminder sent successfully",
+        });
+      }
+      // Auto-dismiss after 4 seconds
+      window.setTimeout(() => {
+        setReminderNotification(null);
+      }, 4000);
+    } catch (cause) {
+      setReminderNotification({
+        type: "error",
+        message: isApiError(cause)
+          ? cause.message || "Failed to send reminder."
+          : "Failed to send reminder.",
+      });
+      window.setTimeout(() => {
+        setReminderNotification(null);
+      }, 4000);
+    } finally {
+      setIsReminderLoading(false);
+    }
+  }, [conversationId]);
+
   const viewModel = useMemo(
     () => getConversationViewModel(statusResponse),
     [statusResponse],
@@ -137,6 +199,42 @@ export default function ConversationStatusPage() {
 
   return (
     <div className="min-h-dvh bg-[radial-gradient(circle_at_top,_rgba(250,204,21,0.24),_transparent_36%),linear-gradient(180deg,_#fffdf5_0%,_#fff8e7_52%,_#f8fafc_100%)] text-slate-900">
+      {reminderNotification && (
+        <div className="fixed top-4 left-4 right-4 sm:left-auto sm:right-4 sm:w-96 z-50 animate-in fade-in slide-in-from-top-2 duration-300">
+          <div
+            className={`rounded-2xl border px-4 py-3 text-sm shadow-lg flex items-center gap-3 ${
+              reminderNotification.type === "success"
+                ? "border-green-200 bg-green-50 text-green-900"
+                : "border-red-200 bg-red-50 text-red-900"
+            }`}
+          >
+            {reminderNotification.type === "success" ? (
+              <CheckCircle2 className="h-5 w-5 shrink-0" />
+            ) : (
+              <AlertCircle className="h-5 w-5 shrink-0" />
+            )}
+            <span className="flex-1">{reminderNotification.message}</span>
+            <button
+              type="button"
+              onClick={() => setReminderNotification(null)}
+              className={`transition ${
+                reminderNotification.type === "success"
+                  ? "text-green-700 hover:text-green-900"
+                  : "text-red-700 hover:text-red-900"
+              }`}
+            >
+              <span className="sr-only">Dismiss</span>
+              <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 20 20">
+                <path
+                  fillRule="evenodd"
+                  d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z"
+                  clipRule="evenodd"
+                />
+              </svg>
+            </button>
+          </div>
+        </div>
+      )}
       <header className="mx-auto flex w-full max-w-6xl items-center justify-between px-4 py-4 sm:px-6 lg:px-8">
         <div className="flex items-center gap-3">
           <Link
@@ -163,7 +261,7 @@ export default function ConversationStatusPage() {
           <button
             type="button"
             onClick={() => void handleCopyLink()}
-            className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm transition hover:border-slate-300 hover:text-slate-900"
+            className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm transition hover:border-slate-300 hover:text-slate-900 cursor-pointer"
           >
             {isCopied ? (
               <Check className="h-4 w-4" />
@@ -174,7 +272,7 @@ export default function ConversationStatusPage() {
           </button>
           <Link
             href="/scan"
-            className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm transition hover:border-slate-300 hover:text-slate-900"
+            className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm transition hover:border-slate-300 hover:text-slate-900 cursor-pointer"
           >
             <ScanLine className="h-4 w-4" />
             New scan
@@ -235,7 +333,7 @@ export default function ConversationStatusPage() {
                     <button
                       type="button"
                       onClick={() => void refreshStatus()}
-                      className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm transition hover:border-slate-300 hover:text-slate-900"
+                      className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm transition hover:border-slate-300 hover:text-slate-900 cursor-pointer"
                     >
                       <RefreshCcw
                         className={`h-4 w-4 ${isRefreshing ? "animate-spin" : ""}`}
@@ -311,11 +409,27 @@ export default function ConversationStatusPage() {
                   <div className="flex flex-wrap gap-3">
                     <Link
                       href="/scan"
-                      className="inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-900 px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800"
+                      className="inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-900 px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 cursor-pointer"
                     >
                       Scan another QR
                       <ArrowRight className="h-4 w-4" />
                     </Link>
+
+                    {statusResponse?.can_follow_up ? (
+                      <button
+                        type="button"
+                        onClick={() => void handleSendReminder()}
+                        disabled={isReminderLoading}
+                        className={`inline-flex items-center justify-center gap-2 rounded-2xl px-5 py-3 text-sm font-semibold transition ${
+                          isReminderLoading
+                            ? "cursor-not-allowed bg-amber-100 text-amber-600"
+                            : "border border-amber-200 bg-amber-50 text-amber-900 hover:bg-amber-100 cursor-pointer"
+                        }`}
+                      >
+                        {isReminderLoading ? "Sending..." : "Send follow-up"}
+                        <Bell className="h-4 w-4" />
+                      </button>
+                    ) : null}
 
                     {viewModel.reminderState === "deferred" ? (
                       <button

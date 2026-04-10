@@ -177,10 +177,55 @@ func (h *MessageHandler) GetConversationStatus(c *gin.Context) {
 		return
 	}
 
+	// Determine if follow-up is allowed
+	// Allow follow-up if conversation is not resolved
+	canFollowUp := conversation.Status != "RESOLVED"
+
 	response := models.ConversationStatusResponse{
 		ConversationID: conversation.ID.String(),
 		Status:         conversation.Status,
 		CreatedAt:      formatJakartaRFC3339(conversation.CreatedAt),
+		CanFollowUp:    canFollowUp,
+	}
+
+	c.JSON(http.StatusOK, response)
+}
+
+// GetScan handles GET /scan?token=xxx
+// Resolves QR token, returns plate info, and checks for active conversation
+func (h *MessageHandler) GetScan(c *gin.Context) {
+	qrToken := c.Query("token")
+	if qrToken == "" {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse{
+			Error: "missing qr token",
+			Code:  "validation_error",
+		})
+		return
+	}
+
+	// Resolve QR token to get qr_id and plate
+	qrCode, err := h.service.ResolveQRToken(c.Request.Context(), qrToken)
+	if err != nil {
+		c.JSON(http.StatusNotFound, models.ErrorResponse{
+			Error: "qr code not found",
+			Code:  "not_found",
+		})
+		return
+	}
+
+	response := models.ScanResponse{
+		Plate: qrCode.Plate,
+	}
+
+	// Check for active conversation if session exists
+	sessionIDStr := contextString(c, middleware.SessionIDKey)
+	if sessionIDStr != "" {
+		conversation, err := h.service.FindActiveConversationBySessionAndQR(c.Request.Context(), sessionIDStr, qrCode.ID.String())
+		if err == nil {
+			convID := conversation.ID.String()
+			response.ConversationID = &convID
+			response.HasActive = true
+		}
 	}
 
 	c.JSON(http.StatusOK, response)

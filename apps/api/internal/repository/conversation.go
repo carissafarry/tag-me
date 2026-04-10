@@ -65,3 +65,35 @@ func (r *ConversationRepository) FindByID(ctx context.Context, conversationID st
 
 	return conversation, nil
 }
+
+func (r *ConversationRepository) FindActiveBySessionAndQR(ctx context.Context, sessionID string, qrCodeID string) (*models.Conversation, error) {
+	conversation := &models.Conversation{}
+
+	err := r.db.QueryRow(
+		ctx,
+		`SELECT DISTINCT
+		   c.id, c.qr_code_id, c.owner_id, c.status, c.created_at, c.updated_at
+		 FROM conversations c
+		 INNER JOIN messages m ON c.id = m.conversation_id
+		 WHERE
+		   c.qr_code_id = $1
+		   AND m.session_id = $2
+		   AND c.status != 'RESOLVED'
+		 ORDER BY c.created_at DESC
+		 LIMIT 1`,
+		qrCodeID,
+		sessionID,
+	).Scan(
+		&conversation.ID,
+		&conversation.QRCodeID,
+		&conversation.OwnerID,
+		&conversation.Status,
+		&conversation.CreatedAt,
+		&conversation.UpdatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	return conversation, nil
+}

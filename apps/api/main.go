@@ -85,6 +85,7 @@ func main() {
 	reminderHandler := handlers.NewReminderHandler(reminderService)
 
 	// Routes
+	router.GET("/scan", messageHandler.GetScan)
 	router.POST("/messages", messageHandler.CreateMessage)
 	router.GET("/conversations/:id/status", messageHandler.GetConversationStatus)
 	router.POST("/conversations/:id/reminder", reminderHandler.CreateReminder)
