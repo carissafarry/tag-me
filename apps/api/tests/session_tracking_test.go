@@ -46,6 +46,21 @@ func TestSessionTrackingSetsContextKeys(t *testing.T) {
 		t.Fatalf("expected response header %s to be %q, got %q", middleware.SessionIDHeader, "custom-session-123", got)
 	}
 
+	cookies := w.Result().Cookies()
+	var sessionCookie *http.Cookie
+	for _, cookie := range cookies {
+		if cookie.Name == middleware.SessionCookieName {
+			sessionCookie = cookie
+			break
+		}
+	}
+	if sessionCookie == nil {
+		t.Fatalf("expected cookie %s to be set", middleware.SessionCookieName)
+	}
+	if sessionCookie.Value != "custom-session-123" {
+		t.Fatalf("expected cookie value to be %q, got %q", "custom-session-123", sessionCookie.Value)
+	}
+
 	var body struct {
 		IPAddress      string `json:"ip_address"`
 		IPPresent      bool   `json:"ip_present"`

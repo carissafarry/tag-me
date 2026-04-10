@@ -4,34 +4,133 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/carissafarry/tag-me/api/internal/models"
+	"github.com/carissafarry/tag-me/api/internal/repository"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 var (
-	ErrInvalidQRToken   = errors.New("invalid qr token")
-	ErrInactiveFQRToken = errors.New("qr token inactive")
-	ErrDatabaseError    = errors.New("database error")
-	ErrInvalidStatus    = errors.New("invalid conversation status")
+	ErrInvalidQRToken            = errors.New("invalid qr token")
+	ErrInactiveFQRToken          = errors.New("qr token inactive")
+	ErrDatabaseError             = errors.New("database error")
+	ErrInvalidStatus             = errors.New("invalid conversation status")
+	ErrConversationRateLimited   = errors.New("conversation rate limited")
+	ErrMessageServiceUnavailable = errors.New("message service unavailable")
+	ErrDailyMessageLimitExceeded = errors.New("daily message limit exceeded for this QR")
 )
 
 // AllowedConversationStatuses defines the valid status states from TAG-8
 var AllowedConversationStatuses = map[string]bool{
 	"PENDING":    true,
-	"DELIVERED": true,
-	"OPENED":    true,
+	"DELIVERED":  true,
+	"OPENED":     true,
 	"ON_THE_WAY": true,
 	"RESOLVED":   true,
 }
 
 type MessageService struct {
-	db *pgxpool.Pool
+	qrCodes          QRCodeRepository
+	conversations    ConversationRepository
+	messages         MessageRepository
+	messageStates    MessageStateReader
+	creationGuard    ConversationCreationGuardRepository
+	creationCooldown time.Duration
+	maxMessagesPerQR int
+}
+
+type QRCodeRepository interface {
+	FindByToken(ctx context.Context, qrToken string) (*models.QRCode, error)
+}
+
+type ConversationRepository interface {
+	Create(ctx context.Context, conversation *models.Conversation) (*models.Conversation, error)
+	FindByID(ctx context.Context, conversationID string) (*models.Conversation, error)
+}
+
+type MessageRepository interface {
+	Create(ctx context.Context, message *models.Message) (*models.Message, error)
+}
+
+type MessageStateReader interface {
+	GetState(ctx context.Context, sessionID string, qrID string) (*models.MessageState, error)
+}
+
+type ConversationCreationGuardRepository interface {
+	ReserveConversationCreation(ctx context.Context, sessionID string, ipAddress string, qrID string, ttl time.Duration) (bool, time.Duration, error)
+}
+
+type MessageConfig struct {
+	ConversationCreationCooldown time.Duration
+	MaxMessagesPerSessionQR      int
+}
+
+type ConversationRateLimitError struct {
+	RetryAfter time.Duration
+	Reason     string // COOLDOWN or DAILY_LIMIT
+}
+
+func (e *ConversationRateLimitError) Error() string {
+	if e.Reason == "DAILY_LIMIT" {
+		return "you have reached the daily message limit"
+	}
+	if e.RetryAfter > 0 {
+		return fmt.Sprintf("you have reached the limit for creating conversations, please try again later (retry after %s)", e.RetryAfter)
+	}
+	return "you have reached the limit for creating conversations, please try again later"
+}
+
+func (e *ConversationRateLimitError) Is(target error) bool {
+	if e.Reason == "DAILY_LIMIT" {
+		return target == ErrDailyMessageLimitExceeded
+	}
+	return target == ErrConversationRateLimited
 }
 
 func NewMessageService(db *pgxpool.Pool) *MessageService {
-	return &MessageService{db: db}
+	return NewMessageServiceWithDependencies(
+		repository.NewQRCodeRepository(db),
+		repository.NewConversationRepository(db),
+		repository.NewMessageRepository(db),
+		nil,
+		nil,
+		nil,
+	)
+}
+
+func NewMessageServiceWithDependencies(
+	qrCodes QRCodeRepository,
+	conversations ConversationRepository,
+	messages MessageRepository,
+	messageStates MessageStateReader,
+	creationGuard ConversationCreationGuardRepository,
+	config *MessageConfig,
+) *MessageService {
+	finalConfig := MessageConfig{
+		ConversationCreationCooldown: time.Minute,
+		MaxMessagesPerSessionQR:      5,
+	}
+
+	if config != nil {
+		if config.ConversationCreationCooldown > 0 {
+			finalConfig.ConversationCreationCooldown = config.ConversationCreationCooldown
+		}
+		if config.MaxMessagesPerSessionQR > 0 {
+			finalConfig.MaxMessagesPerSessionQR = config.MaxMessagesPerSessionQR
+		}
+	}
+
+	return &MessageService{
+		qrCodes:          qrCodes,
+		conversations:    conversations,
+		messages:         messages,
+		messageStates:    messageStates,
+		creationGuard:    creationGuard,
+		creationCooldown: finalConfig.ConversationCreationCooldown,
+		maxMessagesPerQR: finalConfig.MaxMessagesPerSessionQR,
+	}
 }
 
 // ResolveQRToken validates qr_token and returns owner and object context
@@ -40,21 +139,7 @@ func (s *MessageService) ResolveQRToken(ctx context.Context, qrToken string) (*m
 		return nil, ErrInvalidQRToken
 	}
 
-	qr := &models.QRCode{}
-	err := s.db.QueryRow(
-		ctx,
-		`SELECT id, owner_id, qr_token, object_type, object_id, is_active
-		 FROM qr_codes WHERE qr_token = $1`,
-		qrToken,
-	).Scan(
-		&qr.ID,
-		&qr.OwnerID,
-		&qr.QRToken,
-		&qr.ObjectType,
-		&qr.ObjectID,
-		&qr.IsActive,
-	)
-
+	qr, err := s.qrCodes.FindByToken(ctx, qrToken)
 	if err != nil {
 		// QueryRow returns ErrNoRows if not found
 		return nil, ErrInvalidQRToken
@@ -68,7 +153,33 @@ func (s *MessageService) ResolveQRToken(ctx context.Context, qrToken string) (*m
 }
 
 // CreateConversation creates a new conversation for a QR code if one doesn't exist
-func (s *MessageService) CreateConversation(ctx context.Context, qrCode *models.QRCode) (*models.Conversation, error) {
+func (s *MessageService) CreateConversation(ctx context.Context, qrCode *models.QRCode, sessionID string, ipAddress string) (*models.Conversation, error) {
+	if s.creationGuard != nil && sessionID != "" && ipAddress != "" {
+		allowed, retryAfter, err := s.creationGuard.ReserveConversationCreation(
+			ctx,
+			sessionID,
+			ipAddress,
+			qrCode.ID.String(),
+			s.creationCooldown,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %w", ErrMessageServiceUnavailable, err)
+		}
+		if !allowed {
+			return nil, &ConversationRateLimitError{RetryAfter: retryAfter, Reason: "COOLDOWN"}
+		}
+	}
+
+	if s.messageStates != nil && sessionID != "" && s.maxMessagesPerQR > 0 {
+		messageState, err := s.messageStates.GetState(ctx, sessionID, qrCode.ID.String())
+		if err != nil {
+			return nil, fmt.Errorf("%w: %w", ErrMessageServiceUnavailable, err)
+		}
+		if messageState.Count >= s.maxMessagesPerQR {
+			return nil, &ConversationRateLimitError{Reason: "DAILY_LIMIT"}
+		}
+	}
+
 	conv := &models.Conversation{
 		ID:       uuid.New(),
 		QRCodeID: qrCode.ID,
@@ -76,29 +187,12 @@ func (s *MessageService) CreateConversation(ctx context.Context, qrCode *models.
 		Status:   "PENDING",
 	}
 
-	err := s.db.QueryRow(
-		ctx,
-		`INSERT INTO conversations (id, qr_code_id, owner_id, status, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, date_trunc('second', NOW() AT TIME ZONE 'Asia/Jakarta'), date_trunc('second', NOW() AT TIME ZONE 'Asia/Jakarta'))
-		 RETURNING id, qr_code_id, owner_id, status, created_at, updated_at`,
-		conv.ID,
-		conv.QRCodeID,
-		conv.OwnerID,
-		conv.Status,
-	).Scan(
-		&conv.ID,
-		&conv.QRCodeID,
-		&conv.OwnerID,
-		&conv.Status,
-		&conv.CreatedAt,
-		&conv.UpdatedAt,
-	)
-
+	storedConversation, err := s.conversations.Create(ctx, conv)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrDatabaseError, err)
 	}
 
-	return conv, nil
+	return storedConversation, nil
 }
 
 // CreateMessage creates a new message in a conversation
@@ -126,56 +220,18 @@ func (s *MessageService) CreateMessage(
 		IPAddress:         ipAddress,
 	}
 
-	err := s.db.QueryRow(
-		ctx,
-		`INSERT INTO messages (id, conversation_id, sender_type, message_type, content, location_latitude, location_longitude, location_text, session_id, ip_address, created_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, date_trunc('second', NOW() AT TIME ZONE 'Asia/Jakarta'))
-		 RETURNING id, conversation_id, sender_type, message_type, content, location_latitude, location_longitude, location_text, session_id, ip_address::text, created_at`,
-		msg.ID,
-		msg.ConversationID,
-		msg.SenderType,
-		msg.MessageType,
-		msg.Content,
-		msg.LocationLatitude,
-		msg.LocationLongitude,
-		msg.LocationText,
-		msg.SessionID,
-		msg.IPAddress,
-	).Scan(
-		&msg.ID,
-		&msg.ConversationID,
-		&msg.SenderType,
-		&msg.MessageType,
-		&msg.Content,
-		&msg.LocationLatitude,
-		&msg.LocationLongitude,
-		&msg.LocationText,
-		&msg.SessionID,
-		&msg.IPAddress,
-		&msg.CreatedAt,
-	)
-
+	storedMessage, err := s.messages.Create(ctx, msg)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrDatabaseError, err)
 	}
 
-	return msg, nil
+	return storedMessage, nil
 }
 
 // GetConversationStatus retrieves the current status of a conversation
 // Validates that status is in the allowed set (AC5: status values map correctly from owner actions)
 func (s *MessageService) GetConversationStatus(ctx context.Context, conversationID string) (*models.Conversation, error) {
-	conv := &models.Conversation{}
-	err := s.db.QueryRow(
-		ctx,
-		`SELECT id, status, created_at FROM conversations WHERE id = $1`,
-		conversationID,
-	).Scan(
-		&conv.ID,
-		&conv.Status,
-		&conv.CreatedAt,
-	)
-
+	conv, err := s.conversations.FindByID(ctx, conversationID)
 	if err != nil {
 		// QueryRow returns ErrNoRows if not found
 		return nil, ErrDatabaseError

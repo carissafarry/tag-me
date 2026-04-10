@@ -3,26 +3,22 @@ package main
 import (
 	"context"
 	"log"
-	"os"
-	"time"
 
-	"github.com/gin-contrib/cors"
+	"github.com/carissafarry/tag-me/api/internal/config"
 	"github.com/carissafarry/tag-me/api/internal/handlers"
 	"github.com/carissafarry/tag-me/api/internal/middleware"
+	"github.com/carissafarry/tag-me/api/internal/repository"
 	"github.com/carissafarry/tag-me/api/internal/services"
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
 )
 
 func main() {
-	// Get database URL from environment
-	dbURL := os.Getenv("DATABASE_URL")
-	if dbURL == "" {
-		dbURL = "postgres://postgres:rahasia@localhost:5432/tag_me?sslmode=disable"
-	}
+	appConfig := config.Load()
 
 	// Connect to database
-	db, err := pgxpool.New(context.Background(), dbURL)
+	db, err := pgxpool.New(context.Background(), appConfig.Database.URL)
 	if err != nil {
 		log.Fatalf("Failed to connect to database: %v", err)
 	}
@@ -33,28 +29,65 @@ func main() {
 		log.Fatalf("Failed to ping database: %v", err)
 	}
 
+	redisOptions, err := redis.ParseURL(appConfig.Redis.URL)
+	if err != nil {
+		log.Fatalf("Failed to parse Redis URL: %v", err)
+	}
+
+	redisClient := redis.NewClient(redisOptions)
+	defer redisClient.Close()
+
+	if err := redisClient.Ping(context.Background()).Err(); err != nil {
+		log.Fatalf("Failed to ping Redis: %v", err)
+	}
+
 	// Initialize router
 	router := gin.Default()
 
-	router.Use(cors.New(cors.Config{
-		AllowOrigins:     []string{"http://localhost:3000"},
-		AllowMethods:     []string{"GET", "POST", "PATCH", "DELETE", "OPTIONS"},
-		AllowHeaders:     []string{"Origin", "Content-Type", "Accept", "X-Session-ID"},
-		ExposeHeaders:    []string{"Content-Length"},
-		AllowCredentials: false,
-		MaxAge:           12 * time.Hour,
-	}))
+	router.Use(config.NewCORSMiddleware(appConfig.HTTP.CORS))
 
 	// Apply middleware
 	router.Use(middleware.SessionTracking())
 
 	// Initialize service and handler
-	messageService := services.NewMessageService(db)
-	messageHandler := handlers.NewMessageHandler(messageService)
+	messageStateRepository := repository.NewMessageStateRepository(redisClient, appConfig.Redis.MessageStateTTL)
+	conversationCreationGuardRepository := repository.NewConversationCreationGuardRepository(redisClient)
+	messageService := services.NewMessageServiceWithDependencies(
+		repository.NewQRCodeRepository(db),
+		repository.NewConversationRepository(db),
+		repository.NewMessageRepository(db),
+		messageStateRepository,
+		conversationCreationGuardRepository,
+		&services.MessageConfig{
+			ConversationCreationCooldown: appConfig.Message.ConversationCreationCooldown,
+			MaxMessagesPerSessionQR:      appConfig.Message.MaxMessagesPerSessionQR,
+		},
+	)
+	messageHandler := handlers.NewMessageHandlerWithTracker(messageService, messageStateRepository)
+	cooldownRepository := repository.NewCooldownRepository(redisClient)
+	reminderRepository := repository.NewReminderRepository(redisClient, appConfig.Redis.ReminderStateTTL, cooldownRepository)
+	ipRateLimiter := repository.NewIPRateLimiter(redisClient, appConfig.Redis.IPRateLimitTTL)
+	reminderService := services.NewReminderService(
+		db,
+		reminderRepository,
+		messageStateRepository,
+		cooldownRepository,
+		ipRateLimiter,
+		nil,
+		&services.ReminderConfig{
+			Cooldown:                appConfig.Reminder.Cooldown,
+			MaxReminders:            appConfig.Reminder.MaxReminders,
+			MaxMessagesPerSessionQR: appConfig.Reminder.MaxMessagesPerSessionQR,
+			IPWindowLimit:           appConfig.Reminder.IPWindowLimit,
+		},
+		nil,
+	)
+	reminderHandler := handlers.NewReminderHandler(reminderService)
 
 	// Routes
 	router.POST("/messages", messageHandler.CreateMessage)
 	router.GET("/conversations/:id/status", messageHandler.GetConversationStatus)
+	router.POST("/conversations/:id/reminder", reminderHandler.CreateReminder)
 
 	// Health check
 	router.GET("/health", func(c *gin.Context) {
@@ -62,13 +95,8 @@ func main() {
 	})
 
 	// Start server
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8080"
-	}
-
-	log.Printf("Starting server on port %s", port)
-	if err := router.Run(":" + port); err != nil {
+	log.Printf("Starting server on port %s", appConfig.Server.Port)
+	if err := router.Run(":" + appConfig.Server.Port); err != nil {
 		log.Fatalf("Failed to start server: %v", err)
 	}
 }

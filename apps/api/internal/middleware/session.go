@@ -2,16 +2,20 @@ package middleware
 
 import (
 	"net"
+	"net/http"
 	"strings"
 
+	"github.com/carissafarry/tag-me/api/internal/config"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )
 
 const (
-	SessionIDHeader = "X-Session-ID"
-	IPAddressKey    = "ip_address"
-	SessionIDKey    = "session_id"
+	SessionCookieName = config.SessionCookieName
+	SessionIDHeader   = config.SessionIDHeader
+	IPAddressKey      = "ip_address"
+	SessionIDKey      = "session_id"
+	SessionTTL        = config.SessionTTL
 )
 
 // SessionTracking middleware extracts IP address and generates/tracks session ID
@@ -23,8 +27,11 @@ func SessionTracking() gin.HandlerFunc {
 			ipAddress = c.ClientIP()
 		}
 
-		// Generate or retrieve session ID
-		sessionID := c.Request.Header.Get(SessionIDHeader)
+		// Prefer the cookie session, but keep header fallback for compatible clients and tests.
+		sessionID, err := c.Cookie(SessionCookieName)
+		if err != nil || sessionID == "" {
+			sessionID = c.Request.Header.Get(SessionIDHeader)
+		}
 		if sessionID == "" {
 			sessionID = uuid.New().String()
 		}
@@ -33,8 +40,18 @@ func SessionTracking() gin.HandlerFunc {
 		c.Set(IPAddressKey, ipAddress)
 		c.Set(SessionIDKey, sessionID)
 
-		// Add session ID to response header
+		// Preserve the header for compatibility while setting the cookie as the source of truth.
 		c.Header(SessionIDHeader, sessionID)
+		c.SetSameSite(http.SameSiteLaxMode)
+		c.SetCookie(
+			SessionCookieName,
+			sessionID,
+			int(SessionTTL.Seconds()),
+			"/",
+			"",
+			c.Request.TLS != nil,
+			true,
+		)
 
 		c.Next()
 	}
