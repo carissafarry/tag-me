@@ -18,7 +18,10 @@ type CORS struct {
 
 func DefaultCORS() CORS {
 	return CORS{
-		AllowOrigins:     []string{"http://localhost:3000"},
+		AllowOrigins:     []string{
+			"http://localhost:3000",
+			"http://172.20.10.3:3000",
+		},
 		AllowMethods:     []string{"GET", "POST", "PATCH", "DELETE", "OPTIONS"},
 		AllowHeaders:     []string{"Origin", "Content-Type", "Accept", SessionIDHeader},
 		ExposeHeaders:    []string{"Content-Length"},
@@ -30,6 +33,9 @@ func DefaultCORS() CORS {
 func (c CORS) GinConfig() cors.Config {
 	return cors.Config{
 		AllowOrigins:     c.AllowOrigins,
+		AllowOriginFunc: func(origin string) bool {
+			return true
+		},
 		AllowMethods:     c.AllowMethods,
 		AllowHeaders:     c.AllowHeaders,
 		ExposeHeaders:    c.ExposeHeaders,
