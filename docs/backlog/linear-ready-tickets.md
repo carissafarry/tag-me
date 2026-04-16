@@ -764,108 +764,234 @@ Owner needs to generate and use printable QR codes.
 
 ---
 
-# EPIC 4 — Notification Delivery
+# EPIC 4 — Notification Delivery (Async + Event-Ready)
+
+---
 
 ## Issue 15
-**Title:** [WORKER] Notification queue consumer for owner alerts  
+**Title:** [WORKER] BullMQ notification pipeline for conversation events  
 **Priority:** High  
 **Estimate:** M  
-**Labels:** worker, notifications, node, mvp
+**Labels:** worker, notifications, node, bullmq, mvp
 
 ### Why
-Message delivery must be asynchronous and reliable.
+Notification delivery must be **asynchronous, reliable, and extensible** to support:
+- message alerts
+- reminder system
+- future chat replies
+- future multi-channel delivery
+
+---
 
 ### Scope
-- Implement queue consumer for `send_notification`
-- Support owner notification dispatch
-- Structure payload for WhatsApp/email providers
-- Handle success/failure outcomes
-- Update delivery state back to system
+- Implement BullMQ-based worker system 
+- Repo: tag-me-worker
+- Queue name: `notification`
+- Handle job type:
+  - `send_notification`
+
+- Support event types:
+  - `new_message`
+  - `reminder`
+  - (future) `owner_reply`
+
+- Define standardized job payload:
+
+```json
+{
+  "type": "new_message | reminder",
+  "conversation_id": "uuid",
+  "owner_contact": "string",
+  "metadata": {}
+}
+```
+
+- Simulate notification delivery (log-based for MVP)
+- Integrate retry mechanism (BullMQ native)
+- Structure worker for future provider integration (WA/email)
+
+---
 
 ### Out of Scope
-- advanced provider routing
-- realtime websockets
-- multi-provider failover matrix
+- Real provider integration (WhatsApp/email)
+- Multi-provider routing
+- Realtime socket delivery
+- Advanced event bus (RabbitMQ)
+
+---
 
 ### Acceptance Criteria
-1. New scanner message enqueues a notification job.
-2. Worker consumes notification jobs successfully.
-3. Successful delivery updates delivery state.
-4. Failed delivery is marked for retry handling.
-5. Worker logs enough structured info for debugging without leaking sensitive data.
+1. API enqueues job when:
+   - new message created
+   - reminder triggered
+
+2. Worker consumes job from `notification` queue.
+
+3. Worker processes based on `type`:
+   - `new_message` → send alert
+   - `reminder` → send follow-up alert
+
+4. Worker logs structured output:
+
+```
+event=notification_sent type=new_message conversation_id=...
+```
+
+5. Worker supports retry:
+   - attempts: 3
+   - exponential backoff
+
+6. Failed jobs are logged clearly (DLQ-style via failed jobs).
+
+7. Worker is modular:
+   - queue layer
+   - processor layer
+   - runner
+
+---
 
 ### Edge Cases
-- provider timeout
-- malformed job payload
-- duplicate job delivery
-- temporary provider outage
+- malformed payload
+- missing contact info
+- duplicate job enqueue
+- temporary processing failure
+- Redis connection issue
+
+---
 
 ### Unit Test Checklist
 - job payload validation
-- delivery adapter mapping
-- success/failure result handling
-- retry eligibility logic
+- processor branching by type
+- retry trigger on failure
+- failure logging structure
+
+---
 
 ### Integration Test Checklist
-- API creates job and worker consumes it
-- successful send updates delivery state
-- failed send enters retry path
+- API → enqueue job → worker processes
+- retry works on simulated failure
+- logs produced correctly
+
+---
 
 ### Definition of Done
-- queue consumer implemented
-- happy path and failure path tested
-- structured logging present
+- worker runs via Docker
+- queue + processor working
+- retry behavior verified
+- logs observable
+- ready for provider integration
+
+---
+
+## Issue 15.1
+**Title:** [API] Notification enqueue integration from conversation events  
+**Priority:** High  
+**Estimate:** S  
+**Labels:** api, worker, integration
+
+### Why
+Worker requires proper producer integration to function.
+
+---
+
+### Scope
+
+Trigger enqueue from:
+
+#### 1. Message creation
+POST /messages
+
+#### 2. Reminder endpoint
+POST /conversations/:id/reminder
+
+- Implement helper:
+enqueueNotification(payload)
+
+---
+
+### Acceptance Criteria
+1. Creating message → enqueue `new_message`
+2. Sending reminder → enqueue `reminder`
+3. Payload matches worker contract
+4. No sensitive data leakage
+
+---
+
+### Definition of Done
+- API successfully triggers worker jobs
+- End-to-end flow works
 
 ---
 
 ## Issue 16
-**Title:** [WORKER] Notification retry strategy and failure handling  
+**Title:** [WORKER] Retry strategy and failure observability (DLQ-style)  
 **Priority:** High  
 **Estimate:** S  
-**Labels:** worker, notifications, reliability
+**Labels:** worker, reliability, bullmq
 
 ### Why
-Notification delivery failures must be retried to meet reliability goals.
+Failures must be **visible, retryable, and safe**.
+
+---
 
 ### Scope
-- Implement retry policy
-- Configure retry count/backoff
-- Mark terminal failures
-- Expose internal retry trigger endpoint if needed for debug
-- Ensure repeated failures do not spam owner
+- Configure BullMQ retry:
+  - attempts: 3–5
+  - exponential backoff
+
+- Implement failure observability:
+
+#### Logs
+event=notification_failed job_id=... reason=...
+
+#### Optional
+notification_failures
+
+---
 
 ### Out of Scope
-- provider switching
-- manual ops dashboard
+- full DLQ infra (RabbitMQ)
+- manual admin UI
+
+---
 
 ### Acceptance Criteria
-1. Failed notification attempts are retried automatically.
-2. Retry count and delay follow configured policy.
-3. Terminal failure is recorded clearly.
-4. Retry flow does not create duplicate final success states.
-5. Optional internal retry endpoint is protected and non-public.
+1. Failed notification attempts are retried automatically
+2. Retry count and delay follow configured policy
+3. Terminal failure is recorded clearly
+4. Retry flow does not create duplicate success states
+5. Worker remains idempotent
+
+---
 
 ### Edge Cases
 - intermittent provider recovery
 - duplicate retry scheduling
 - poisoned job
 - retry exhaustion
+- Redis downtime
+
+---
 
 ### Unit Test Checklist
-- retry scheduling logic
-- terminal failure logic
-- duplicate success prevention
-- internal retry authorization guard
+- retry behavior
+- backoff timing
+- failure logging
+- idempotency
+
+---
 
 ### Integration Test Checklist
-- failed delivery is retried according to policy
-- eventual success updates status correctly
-- exhausted retries marked as terminal failure
+- simulate failure → retry → success
+- simulate failure → max retry → fail
+- logs visible for both cases
+
+---
 
 ### Definition of Done
 - retry policy working
 - failure path observable
-- tests updated
+- safe for production usage
 
 ---
 
