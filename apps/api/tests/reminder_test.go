@@ -25,7 +25,7 @@ type reminderNotifierSpy struct {
 	calls []string
 }
 
-func (s *reminderNotifierSpy) Enqueue(_ context.Context, conversationID string, notificationType string) error {
+func (s *reminderNotifierSpy) EnqueueNotification(_ context.Context, notificationType string, conversationID string, ownerContact string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -74,7 +74,7 @@ func setupReminderTestDeps(t *testing.T, now time.Time, config *services.Reminde
 		messageStateRepository,
 		cooldownRepository,
 		ipRateLimiter,
-		notifier.Enqueue,
+		notifier,
 		config,
 		func() time.Time { return now.UTC() },
 	)
@@ -332,5 +332,36 @@ func TestReminderEndpointRedisUnavailable(t *testing.T) {
 	response := decodeReminderResponse(t, recorder)
 	if response.Success || response.Reason != string(models.ReminderReasonUnavailable) {
 		t.Fatalf("expected temporarily_unavailable response, got %+v", response)
+	}
+}
+
+// TestReminderEnqueueNotification verifies reminder success enqueues notification
+func TestReminderEnqueueNotification(t *testing.T) {
+	now := time.Date(2026, 4, 9, 8, 0, 0, 0, time.UTC)
+	deps := setupReminderTestDeps(t, now, &services.ReminderConfig{
+		Cooldown:                  2 * time.Minute,
+		MaxReminders:              3,
+		MaxMessagesPerSessionQR: 5,
+		IPWindowLimit:             10,
+	})
+
+	sessionID := "session-enqueue"
+	if _, err := deps.messageStateRepo.TrackMessage(context.Background(), sessionID, deps.qrID, now.Add(-time.Minute)); err != nil {
+		t.Fatalf("failed to seed message state: %v", err)
+	}
+
+	recorder := performReminderRequest(t, deps.router, deps.conversationID, sessionID, "203.0.113.30")
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", recorder.Code, recorder.Body.String())
+	}
+
+	response := decodeReminderResponse(t, recorder)
+	if !response.Success {
+		t.Fatalf("expected successful reminder, got %+v", response)
+	}
+
+	// Verify notification was enqueued
+	if deps.notifier.Count() != 1 {
+		t.Fatalf("expected 1 notification enqueue, got %d", deps.notifier.Count())
 	}
 }

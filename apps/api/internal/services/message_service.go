@@ -37,6 +37,7 @@ type MessageService struct {
 	messages         MessageRepository
 	messageStates    MessageStateReader
 	creationGuard    ConversationCreationGuardRepository
+	enqueue          NotificationEnqueuer
 	creationCooldown time.Duration
 	maxMessagesPerQR int
 }
@@ -98,6 +99,7 @@ func NewMessageService(db *pgxpool.Pool) *MessageService {
 		nil,
 		nil,
 		nil,
+		nil,
 	)
 }
 
@@ -107,6 +109,7 @@ func NewMessageServiceWithDependencies(
 	messages MessageRepository,
 	messageStates MessageStateReader,
 	creationGuard ConversationCreationGuardRepository,
+	enqueue NotificationEnqueuer,
 	config *MessageConfig,
 ) *MessageService {
 	finalConfig := MessageConfig{
@@ -129,6 +132,7 @@ func NewMessageServiceWithDependencies(
 		messages:         messages,
 		messageStates:    messageStates,
 		creationGuard:    creationGuard,
+		enqueue:          enqueue,
 		creationCooldown: finalConfig.ConversationCreationCooldown,
 		maxMessagesPerQR: finalConfig.MaxMessagesPerSessionQR,
 	}
@@ -227,6 +231,15 @@ func (s *MessageService) CreateMessage(
 	}
 
 	return storedMessage, nil
+}
+
+// EnqueueNewMessageNotification enqueues a new_message notification
+func (s *MessageService) EnqueueNewMessageNotification(ctx context.Context, conversationID string, ownerContact string) error {
+	if s.enqueue == nil {
+		return nil // No enqueuer configured, skip
+	}
+
+	return s.enqueue.EnqueueNotification(ctx, "new_message", conversationID, ownerContact)
 }
 
 // GetConversationStatus retrieves the current status of a conversation

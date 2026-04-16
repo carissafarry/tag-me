@@ -142,6 +142,16 @@ func (h *MessageHandler) CreateMessage(c *gin.Context) {
 		}
 	}
 
+	// Enqueue notification asynchronously
+	// Don't fail the request if enqueue fails - message was already created
+	conversationID := conversation.ID.String()
+	ownerID := conversation.OwnerID.String()
+	go func(conversationID string, ownerID string) {
+		enqueueCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+
+		_ = h.service.EnqueueNewMessageNotification(enqueueCtx, conversationID, ownerID)
+	}(conversationID, ownerID)
 	// Return response with conversation ID for status tracking
 	// Exclude owner contact and session metadata
 	response := models.CreateMessageResponse{

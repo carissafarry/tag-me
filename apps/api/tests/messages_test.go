@@ -3,6 +3,7 @@ package tests
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -22,6 +23,42 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/redis/go-redis/v9"
 )
+
+type notificationEnqueuerSpy struct {
+	mu    sync.Mutex
+	calls []struct {
+		notificationType string
+		conversationID   string
+		ownerContact     string
+	}
+}
+
+func (s *notificationEnqueuerSpy) EnqueueNotification(ctx context.Context, notificationType string, conversationID string, ownerContact string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.calls = append(s.calls, struct {
+		notificationType string
+		conversationID   string
+		ownerContact     string
+	}{notificationType, conversationID, ownerContact})
+	return nil
+}
+
+func (s *notificationEnqueuerSpy) CallCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.calls)
+}
+
+func (s *notificationEnqueuerSpy) LastCall() (string, string, string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.calls) > 0 {
+		c := s.calls[len(s.calls)-1]
+		return c.notificationType, c.conversationID, c.ownerContact
+	}
+	return "", "", ""
+}
 
 // setupTestDB creates a test database connection and cleans up tables
 func setupTestDB(t *testing.T) *pgxpool.Pool {
@@ -44,6 +81,7 @@ func setupTestDB(t *testing.T) *pgxpool.Pool {
 		object_type VARCHAR(100) NOT NULL,
 		object_id UUID NOT NULL,
 		is_active BOOLEAN NOT NULL DEFAULT true,
+		plate VARCHAR(255),
 		created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT date_trunc('second', NOW() AT TIME ZONE 'Asia/Jakarta'),
 		updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT date_trunc('second', NOW() AT TIME ZONE 'Asia/Jakarta')
 	);
@@ -371,6 +409,7 @@ func setupGuardedMessageTestDeps(t *testing.T, cooldown time.Duration) *guardedM
 		repository.NewMessageRepository(db),
 		messageStateRepository,
 		repository.NewConversationCreationGuardRepository(client),
+		nil, // no notification enqueuer for test
 		&services.MessageConfig{
 			ConversationCreationCooldown: cooldown,
 			MaxMessagesPerSessionQR:    5,
@@ -489,7 +528,7 @@ func TestCreateMessageRejectsDuplicateConversationWithinCooldown(t *testing.T) {
 	if response.Code != "rate_limited" {
 		t.Fatalf("expected code rate_limited, got %s", response.Code)
 	}
-	if response.Error != "you have reached the limit for creating conversations, please try again later" {
+	if response.Error != "you are creating conversations too quickly, please try again later" {
 		t.Fatalf("unexpected error message: %s", response.Error)
 	}
 	if second.Header().Get("Retry-After") == "" {
@@ -683,14 +722,449 @@ func TestCreateMessageRejectsWhenMessageLimitReached(t *testing.T) {
 		t.Fatalf("failed to decode error response: %v", err)
 	}
 
-	if response.Code != "rate_limited" {
-		t.Fatalf("expected code rate_limited, got %s", response.Code)
+	if response.Code != "daily_limit_exceeded" {
+		t.Fatalf("expected code daily_limit_exceeded, got %s", response.Code)
 	}
 	if countRows(t, deps.db, "conversations") != 0 {
 		t.Fatalf("expected no conversation rows when message limit is reached")
 	}
 	if countRows(t, deps.db, "messages") != 0 {
 		t.Fatalf("expected no message rows when message limit is reached")
+	}
+}
+
+// TestMessageCreationEnqueuesNotification: TAG-12 - Message creation enqueues new_message notification
+func TestMessageCreationEnqueuesNotification(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	// Create test QR code
+	ownerID := uuid.New()
+	qrCodeID := uuid.New()
+	qrToken := "test-enqueue-token-" + uuid.New().String()
+
+	_, err := db.Exec(context.Background(), `
+		INSERT INTO qr_codes (id, owner_id, qr_token, object_type, object_id, is_active)
+		VALUES ($1, $2, $3, $4, $5, true)
+	`, qrCodeID, ownerID, qrToken, "link", uuid.New())
+	if err != nil {
+		t.Fatalf("Failed to insert test QR code: %v", err)
+	}
+
+	// Create service with notification spy
+	enqueuer := &notificationEnqueuerSpy{}
+	service := services.NewMessageServiceWithDependencies(
+		repository.NewQRCodeRepository(db),
+		repository.NewConversationRepository(db),
+		repository.NewMessageRepository(db),
+		nil,
+		nil,
+		enqueuer,
+		nil,
+	)
+	handler := handlers.NewMessageHandler(service)
+
+	router := gin.New()
+	router.Use(middleware.SessionTracking())
+	router.POST("/messages", handler.CreateMessage)
+
+	payload := map[string]interface{}{
+		"qr_token":     qrToken,
+		"message_type": "text",
+		"content":      "test message",
+	}
+	payloadBytes, _ := json.Marshal(payload)
+
+	req, _ := http.NewRequest("POST", "/messages", strings.NewReader(string(payloadBytes)))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected status 201, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// Verify notification was enqueued
+	if enqueuer.CallCount() != 1 {
+		t.Fatalf("expected 1 notification enqueue call, got %d", enqueuer.CallCount())
+	}
+
+	notifType, convID, ownerContact := enqueuer.LastCall()
+	if notifType != "new_message" {
+		t.Errorf("expected notification type 'new_message', got %s", notifType)
+	}
+	if convID == "" {
+		t.Error("notification should include conversation ID")
+	}
+	if ownerContact == "" {
+		t.Error("notification should include owner contact")
+	}
+}
+
+// TestMessageCreationWithEnqueueError verifies message is created even if enqueue fails
+func TestMessageCreationWithEnqueueError(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	// Create test QR code
+	ownerID := uuid.New()
+	qrCodeID := uuid.New()
+	qrToken := "test-enqueue-error-" + uuid.New().String()
+
+	_, err := db.Exec(context.Background(), `
+		INSERT INTO qr_codes (id, owner_id, qr_token, object_type, object_id, is_active)
+		VALUES ($1, $2, $3, $4, $5, true)
+	`, qrCodeID, ownerID, qrToken, "link", uuid.New())
+	if err != nil {
+		t.Fatalf("Failed to insert test QR code: %v", err)
+	}
+
+	// Create service with failing enqueuer
+	failingEnqueuer := &failingNotificationEnqueuer{}
+	service := services.NewMessageServiceWithDependencies(
+		repository.NewQRCodeRepository(db),
+		repository.NewConversationRepository(db),
+		repository.NewMessageRepository(db),
+		nil,
+		nil,
+		failingEnqueuer,
+		nil,
+	)
+	handler := handlers.NewMessageHandler(service)
+
+	router := gin.New()
+	router.Use(middleware.SessionTracking())
+	router.POST("/messages", handler.CreateMessage)
+
+	payload := map[string]interface{}{
+		"qr_token":     qrToken,
+		"message_type": "text",
+		"content":      "test with failing enqueue",
+	}
+	payloadBytes, _ := json.Marshal(payload)
+
+	req, _ := http.NewRequest("POST", "/messages", strings.NewReader(string(payloadBytes)))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	// Message should still be created even though enqueue failed
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected status 201 despite enqueue error, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// Verify conversation and message were created
+	if countRows(t, db, "conversations") != 1 {
+		t.Fatalf("expected 1 conversation created")
+	}
+	if countRows(t, db, "messages") != 1 {
+		t.Fatalf("expected 1 message created")
+	}
+}
+
+type failingNotificationEnqueuer struct{}
+
+func (f *failingNotificationEnqueuer) EnqueueNotification(ctx context.Context, notificationType string, conversationID string, ownerContact string) error {
+	return services.ErrMessageServiceUnavailable
+}
+
+// TestEnqueueNewMessageNotificationDirect tests service method directly
+func TestEnqueueNewMessageNotificationDirect(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	enqueuer := &notificationEnqueuerSpy{}
+	service := services.NewMessageServiceWithDependencies(
+		repository.NewQRCodeRepository(db),
+		repository.NewConversationRepository(db),
+		repository.NewMessageRepository(db),
+		nil,
+		nil,
+		enqueuer,
+		nil,
+	)
+
+	ctx := context.Background()
+	conversationID := "test-conv-456"
+	ownerContact := "owner@test.com"
+
+	// Call service method directly
+	err := service.EnqueueNewMessageNotification(ctx, conversationID, ownerContact)
+	if err != nil {
+		t.Fatalf("enqueue should not error: %v", err)
+	}
+
+	// Verify enqueue was called
+	if enqueuer.CallCount() != 1 {
+		t.Fatalf("expected 1 enqueue call, got %d", enqueuer.CallCount())
+	}
+
+	notifType, convID, owner := enqueuer.LastCall()
+	if notifType != "new_message" {
+		t.Errorf("expected type=new_message, got %s", notifType)
+	}
+	if convID != conversationID {
+		t.Errorf("expected conversationID=%s, got %s", conversationID, convID)
+	}
+	if owner != ownerContact {
+		t.Errorf("expected owner=%s, got %s", ownerContact, owner)
+	}
+}
+
+// TestEnqueueNewMessageNotificationWithNilEnqueuer tests that nil enqueuer doesn't error
+func TestEnqueueNewMessageNotificationWithNilEnqueuer(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	service := services.NewMessageServiceWithDependencies(
+		repository.NewQRCodeRepository(db),
+		repository.NewConversationRepository(db),
+		repository.NewMessageRepository(db),
+		nil,
+		nil,
+		nil, // nil enqueuer
+		nil,
+	)
+
+	ctx := context.Background()
+	// Should not panic or error when enqueuer is nil
+	err := service.EnqueueNewMessageNotification(ctx, "conv-789", "owner@test.com")
+	if err != nil {
+		t.Fatalf("should not error with nil enqueuer: %v", err)
+	}
+}
+
+// TestMessageCreationInvalidQRToken tests handler response for invalid token
+func TestMessageCreationInvalidQRToken(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	service := services.NewMessageService(db)
+	handler := handlers.NewMessageHandler(service)
+
+	router := gin.New()
+	router.Use(middleware.SessionTracking())
+	router.POST("/messages", handler.CreateMessage)
+
+	payload := map[string]interface{}{
+		"qr_token":     "nonexistent-token",
+		"message_type": "text",
+	}
+	payloadBytes, _ := json.Marshal(payload)
+
+	req, _ := http.NewRequest("POST", "/messages", strings.NewReader(string(payloadBytes)))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var errResp models.ErrorResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &errResp); err != nil {
+		t.Fatalf("failed to parse error response: %v", err)
+	}
+
+	if errResp.Code != "invalid_qr_token" {
+		t.Errorf("expected code invalid_qr_token, got %s", errResp.Code)
+	}
+}
+
+// TestGetConversationStatusService tests service method directly
+func TestGetConversationStatusService(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	ownerID := uuid.New()
+	qrCodeID := uuid.New()
+	conversationID := uuid.New()
+
+	// Insert conversation
+	_, err := db.Exec(context.Background(), `
+		INSERT INTO qr_codes (id, owner_id, qr_token, object_type, object_id, is_active)
+		VALUES ($1, $2, $3, $4, $5, true)
+	`, qrCodeID, ownerID, "token-status-test", "link", uuid.New())
+	if err != nil {
+		t.Fatalf("failed to insert qr code: %v", err)
+	}
+
+	_, err = db.Exec(context.Background(), `
+		INSERT INTO conversations (id, qr_code_id, owner_id, status, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, NOW(), NOW())
+	`, conversationID, qrCodeID, ownerID, "PENDING")
+	if err != nil {
+		t.Fatalf("failed to insert conversation: %v", err)
+	}
+
+	service := services.NewMessageService(db)
+	conv, err := service.GetConversationStatus(context.Background(), conversationID.String())
+	if err != nil {
+		t.Fatalf("GetConversationStatus failed: %v", err)
+	}
+
+	if conv.ID != conversationID {
+		t.Errorf("expected conversation ID %s, got %s", conversationID, conv.ID)
+	}
+	if conv.Status != "PENDING" {
+		t.Errorf("expected status PENDING, got %s", conv.Status)
+	}
+}
+
+// TestFindActiveConversationBySessionAndQR tests finding active conversation
+func TestFindActiveConversationBySessionAndQR(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	ownerID := uuid.New()
+	qrCodeID := uuid.New()
+	conversationID := uuid.New()
+	sessionID := "active-session"
+
+	// Insert QR and conversation
+	_, err := db.Exec(context.Background(), `
+		INSERT INTO qr_codes (id, owner_id, qr_token, object_type, object_id, is_active)
+		VALUES ($1, $2, $3, $4, $5, true)
+	`, qrCodeID, ownerID, "active-token", "link", uuid.New())
+	if err != nil {
+		t.Fatalf("failed to insert qr code: %v", err)
+	}
+
+	_, err = db.Exec(context.Background(), `
+		INSERT INTO conversations (id, qr_code_id, owner_id, status, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, NOW(), NOW())
+	`, conversationID, qrCodeID, ownerID, "PENDING")
+	if err != nil {
+		t.Fatalf("failed to insert conversation: %v", err)
+	}
+
+	service := services.NewMessageService(db)
+	conv, err := service.FindActiveConversationBySessionAndQR(context.Background(), sessionID, qrCodeID.String())
+
+	// Expect error since we haven't linked the session to the conversation
+	// (the repository checks for active status and matching session)
+	if err == nil {
+		t.Fatalf("expected error for unlinked session, got conversation: %+v", conv)
+	}
+	if conv != nil {
+		t.Errorf("expected nil conversation on error, got %+v", conv)
+	}
+}
+
+// TestResolveQRTokenService tests ResolveQRToken service method
+func TestResolveQRTokenService(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	ownerID := uuid.New()
+	qrCodeID := uuid.New()
+	qrToken := "resolve-token-" + uuid.New().String()
+
+	// Insert active QR code
+	_, err := db.Exec(context.Background(), `
+		INSERT INTO qr_codes (id, owner_id, qr_token, object_type, object_id, is_active)
+		VALUES ($1, $2, $3, $4, $5, true)
+	`, qrCodeID, ownerID, qrToken, "link", uuid.New())
+	if err != nil {
+		t.Fatalf("failed to insert qr code: %v", err)
+	}
+
+	service := services.NewMessageService(db)
+	qr, err := service.ResolveQRToken(context.Background(), qrToken)
+	if err != nil {
+		t.Fatalf("ResolveQRToken failed: %v", err)
+	}
+
+	if qr.ID != qrCodeID {
+		t.Errorf("expected qr ID %s, got %s", qrCodeID, qr.ID)
+	}
+	if !qr.IsActive {
+		t.Error("expected QR code to be active")
+	}
+}
+
+// TestResolveQRTokenInactive tests ResolveQRToken with inactive QR code
+func TestResolveQRTokenInactive(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	ownerID := uuid.New()
+	qrCodeID := uuid.New()
+	qrToken := "inactive-token-" + uuid.New().String()
+
+	// Insert inactive QR code
+	_, err := db.Exec(context.Background(), `
+		INSERT INTO qr_codes (id, owner_id, qr_token, object_type, object_id, is_active)
+		VALUES ($1, $2, $3, $4, $5, false)
+	`, qrCodeID, ownerID, qrToken, "link", uuid.New())
+	if err != nil {
+		t.Fatalf("failed to insert qr code: %v", err)
+	}
+
+	service := services.NewMessageService(db)
+	_, err = service.ResolveQRToken(context.Background(), qrToken)
+	if err == nil {
+		t.Fatal("expected error for inactive QR code")
+	}
+	if !errors.Is(err, services.ErrInactiveFQRToken) {
+		t.Errorf("expected ErrInactiveFQRToken, got %v", err)
+	}
+}
+
+// TestCreateMessageAllOptionalFields tests message creation with all optional fields
+func TestCreateMessageAllOptionalFields(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	ownerID := uuid.New()
+	qrCodeID := uuid.New()
+	conversationID := uuid.New()
+
+	_, err := db.Exec(context.Background(), `
+		INSERT INTO conversations (id, qr_code_id, owner_id, status, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, NOW(), NOW())
+	`, conversationID, qrCodeID, ownerID, "PENDING")
+	if err != nil {
+		t.Fatalf("failed to insert conversation: %v", err)
+	}
+
+	service := services.NewMessageService(db)
+
+	// Create message with all fields including optional ones
+	content := "detailed message"
+	lat := 37.7749
+	lon := -122.4194
+	locText := "San Francisco"
+	sessionID := "test-session"
+	ipAddr := "192.168.1.1"
+
+	msg, err := service.CreateMessage(
+		context.Background(),
+		conversationID,
+		"photo",
+		&content,
+		&lat,
+		&lon,
+		&locText,
+		&sessionID,
+		&ipAddr,
+	)
+
+	if err != nil {
+		t.Fatalf("CreateMessage failed: %v", err)
+	}
+
+	if msg.Content == nil || *msg.Content != content {
+		t.Errorf("expected content %s, got %v", content, msg.Content)
+	}
+	if msg.LocationLatitude == nil || *msg.LocationLatitude != lat {
+		t.Errorf("expected lat %f, got %v", lat, msg.LocationLatitude)
+	}
+	if msg.LocationLongitude == nil || *msg.LocationLongitude != lon {
+		t.Errorf("expected lon %f, got %v", lon, msg.LocationLongitude)
+	}
+	if msg.LocationText == nil || *msg.LocationText != locText {
+		t.Errorf("expected location text %s, got %v", locText, msg.LocationText)
 	}
 }
 
@@ -1143,7 +1617,7 @@ func TestGetConversationStatusValid(t *testing.T) {
 		t.Error("response missing created_at")
 	}
 
-	// Verify response has exactly 3 fields, no owner/session data
+	// Verify response has exactly 4 fields, no owner/session data
 	respMap := make(map[string]interface{})
 	json.Unmarshal(w.Body.Bytes(), &respMap)
 
@@ -1151,6 +1625,7 @@ func TestGetConversationStatusValid(t *testing.T) {
 		"conversation_id": true,
 		"status":          true,
 		"created_at":      true,
+		"can_follow_up":   true,
 	}
 	for field := range respMap {
 		if !expectedFields[field] {

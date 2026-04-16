@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/carissafarry/tag-me/api/internal/models"
@@ -30,7 +31,16 @@ type IPRateLimiter interface {
 	IncrementAndCheck(ctx context.Context, ipAddress string, qrID string, maxRequests int) (*models.IPRateLimitState, error)
 }
 
-type NotificationEnqueuer func(ctx context.Context, conversationID string, notificationType string) error
+type NotificationEnqueuer interface {
+	EnqueueNotification(ctx context.Context, notificationType string, conversationID string, ownerContact string) error
+}
+
+// NoOpNotificationEnqueuer is a no-op implementation of NotificationEnqueuer
+type NoOpNotificationEnqueuer struct{}
+
+func (n *NoOpNotificationEnqueuer) EnqueueNotification(ctx context.Context, notificationType string, conversationID string, ownerContact string) error {
+	return nil
+}
 
 type ReminderConfig struct {
 	Cooldown                time.Duration
@@ -53,6 +63,8 @@ type ReminderService struct {
 	config        ReminderConfig
 	now           func() time.Time
 }
+
+const reminderEnqueueTimeout = 2 * time.Second
 
 func NewReminderService(
 	db *pgxpool.Pool,
@@ -109,7 +121,7 @@ func NewReminderServiceWithConversationRepository(
 	}
 
 	if enqueue == nil {
-		enqueue = func(context.Context, string, string) error { return nil }
+		enqueue = &NoOpNotificationEnqueuer{}
 	}
 
 	if now == nil {
@@ -235,9 +247,23 @@ func (s *ReminderService) SendReminder(ctx context.Context, request models.Remin
 			Reason:  models.ReminderReasonLimitReached,
 		}, nil
 	case models.ReminderReasonSent:
-		if err := s.enqueue(ctx, request.ConversationID, "REMINDER"); err != nil {
-			return nil, fmt.Errorf("enqueue reminder notification: %w", err)
-		}
+		conversationID := request.ConversationID
+		go func(conversationID string) {
+			defer func() {
+				if recovered := recover(); recovered != nil {
+					log.Printf("warning: panic enqueueing notification: conversation_id=%s panic=%v", conversationID, recovered)
+				}
+			}()
+
+			enqueueCtx, cancel := context.WithTimeout(context.Background(), reminderEnqueueTimeout)
+			defer cancel()
+
+			if err := s.enqueue.EnqueueNotification(enqueueCtx, "reminder", conversationID, ""); err != nil {
+				// Log enqueue error but don't fail the reminder request.
+				// The reminder was already recorded successfully.
+				log.Printf("warning: failed to enqueue reminder notification: conversation_id=%s type=reminder err=%v", conversationID, err)
+			}
+		}(conversationID)
 
 		remainingReminder := reservation.RemainingReminder
 		return &models.ReminderResult{

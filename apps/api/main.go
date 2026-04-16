@@ -52,12 +52,22 @@ func main() {
 	// Initialize service and handler
 	messageStateRepository := repository.NewMessageStateRepository(redisClient, appConfig.Redis.MessageStateTTL)
 	conversationCreationGuardRepository := repository.NewConversationCreationGuardRepository(redisClient)
+
+	// Initialize notification service (enqueuer for worker queue)
+	// Use environment variable for worker URL, default to localhost
+	workerURL := appConfig.Worker.URL
+	if workerURL == "" {
+		workerURL = "http://localhost:3010"
+	}
+	notificationService := services.NewNotificationService(workerURL)
+
 	messageService := services.NewMessageServiceWithDependencies(
 		repository.NewQRCodeRepository(db),
 		repository.NewConversationRepository(db),
 		repository.NewMessageRepository(db),
 		messageStateRepository,
 		conversationCreationGuardRepository,
+		notificationService,
 		&services.MessageConfig{
 			ConversationCreationCooldown: appConfig.Message.ConversationCreationCooldown,
 			MaxMessagesPerSessionQR:      appConfig.Message.MaxMessagesPerSessionQR,
@@ -73,7 +83,7 @@ func main() {
 		messageStateRepository,
 		cooldownRepository,
 		ipRateLimiter,
-		nil,
+		notificationService,
 		&services.ReminderConfig{
 			Cooldown:                appConfig.Reminder.Cooldown,
 			MaxReminders:            appConfig.Reminder.MaxReminders,
