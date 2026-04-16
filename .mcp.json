@@ -13,6 +13,14 @@
         "/Users/carissafarry/Documents/Projects/Personal/tag-me"
       ],
       "env": {}
+    },
+    "code-review-graph": {
+      "command": "uvx",
+      "args": [
+        "code-review-graph",
+        "serve"
+      ],
+      "type": "stdio"
     }
   }
 }

@@ -2,3 +2,6 @@
 ./apps/api/tmp/main
 .env
 *.md
+/workflows
+# Added by code-review-graph
+.code-review-graph/
