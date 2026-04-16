@@ -249,6 +249,12 @@ func (s *ReminderService) SendReminder(ctx context.Context, request models.Remin
 	case models.ReminderReasonSent:
 		conversationID := request.ConversationID
 		go func(conversationID string) {
+			defer func() {
+				if recovered := recover(); recovered != nil {
+					log.Printf("warning: panic while enqueueing reminder notification: conversation_id=%s type=reminder panic=%v", conversationID, recovered)
+				}
+			}()
+
 			enqueueCtx, cancel := context.WithTimeout(context.Background(), reminderEnqueueTimeout)
 			defer cancel()
 
