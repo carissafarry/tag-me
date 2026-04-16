@@ -64,7 +64,7 @@ func (s *blockingNotificationEnqueuer) EnqueueNotification(context.Context, stri
 	return nil
 }
 
-func TestSendReminderDoesNotBlockOnNotificationEnqueue(t *testing.T) {
+func TestSendReminderAsyncEnqueue(t *testing.T) {
 	enqueue := &blockingNotificationEnqueuer{
 		started: make(chan struct{}),
 		release: make(chan struct{}),

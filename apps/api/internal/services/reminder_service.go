@@ -251,7 +251,7 @@ func (s *ReminderService) SendReminder(ctx context.Context, request models.Remin
 		go func(conversationID string) {
 			defer func() {
 				if recovered := recover(); recovered != nil {
-					log.Printf("warning: panic while enqueueing reminder notification: conversation_id=%s type=reminder panic=%v", conversationID, recovered)
+					log.Printf("warning: panic enqueueing notification: conversation_id=%s panic=%v", conversationID, recovered)
 				}
 			}()
 
