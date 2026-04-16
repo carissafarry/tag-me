@@ -10,6 +10,7 @@ type App struct {
 	Session  Session
 	Message  Message
 	Reminder Reminder
+	Worker   Worker
 }
 
 type Server struct {
@@ -43,6 +44,10 @@ type Message struct {
 	MaxMessagesPerSessionQR      int
 }
 
+type Worker struct {
+	URL string
+}
+
 // Load reads configuration from environment variables and returns an App struct with the values.
 func Load() App {
 	return App{
@@ -71,6 +76,9 @@ func Load() App {
 			MaxReminders:            PositiveInt("REMINDER_MAX_ATTEMPTS", 3),
 			MaxMessagesPerSessionQR: PositiveInt("MESSAGE_MAX_PER_SESSION_QR", 5),
 			IPWindowLimit:           PositiveInt("REMINDER_IP_WINDOW_LIMIT", 10),
+		},
+		Worker: Worker{
+			URL: String("WORKER_URL", "http://localhost:3010"),
 		},
 	}
 }
