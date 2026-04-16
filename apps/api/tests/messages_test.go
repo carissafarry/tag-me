@@ -3,6 +3,7 @@ package tests
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -967,6 +968,203 @@ func TestMessageCreationInvalidQRToken(t *testing.T) {
 
 	if errResp.Code != "invalid_qr_token" {
 		t.Errorf("expected code invalid_qr_token, got %s", errResp.Code)
+	}
+}
+
+// TestGetConversationStatusService tests service method directly
+func TestGetConversationStatusService(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	ownerID := uuid.New()
+	qrCodeID := uuid.New()
+	conversationID := uuid.New()
+
+	// Insert conversation
+	_, err := db.Exec(context.Background(), `
+		INSERT INTO qr_codes (id, owner_id, qr_token, object_type, object_id, is_active)
+		VALUES ($1, $2, $3, $4, $5, true)
+	`, qrCodeID, ownerID, "token-status-test", "link", uuid.New())
+	if err != nil {
+		t.Fatalf("failed to insert qr code: %v", err)
+	}
+
+	_, err = db.Exec(context.Background(), `
+		INSERT INTO conversations (id, qr_code_id, owner_id, status, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, NOW(), NOW())
+	`, conversationID, qrCodeID, ownerID, "PENDING")
+	if err != nil {
+		t.Fatalf("failed to insert conversation: %v", err)
+	}
+
+	service := services.NewMessageService(db)
+	conv, err := service.GetConversationStatus(context.Background(), conversationID.String())
+	if err != nil {
+		t.Fatalf("GetConversationStatus failed: %v", err)
+	}
+
+	if conv.ID != conversationID {
+		t.Errorf("expected conversation ID %s, got %s", conversationID, conv.ID)
+	}
+	if conv.Status != "PENDING" {
+		t.Errorf("expected status PENDING, got %s", conv.Status)
+	}
+}
+
+// TestFindActiveConversationBySessionAndQR tests finding active conversation
+func TestFindActiveConversationBySessionAndQR(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	ownerID := uuid.New()
+	qrCodeID := uuid.New()
+	conversationID := uuid.New()
+	sessionID := "active-session"
+
+	// Insert QR and conversation
+	_, err := db.Exec(context.Background(), `
+		INSERT INTO qr_codes (id, owner_id, qr_token, object_type, object_id, is_active)
+		VALUES ($1, $2, $3, $4, $5, true)
+	`, qrCodeID, ownerID, "active-token", "link", uuid.New())
+	if err != nil {
+		t.Fatalf("failed to insert qr code: %v", err)
+	}
+
+	_, err = db.Exec(context.Background(), `
+		INSERT INTO conversations (id, qr_code_id, owner_id, status, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, NOW(), NOW())
+	`, conversationID, qrCodeID, ownerID, "PENDING")
+	if err != nil {
+		t.Fatalf("failed to insert conversation: %v", err)
+	}
+
+	service := services.NewMessageService(db)
+	conv, err := service.FindActiveConversationBySessionAndQR(context.Background(), sessionID, qrCodeID.String())
+
+	// Expect error since we haven't linked the session to the conversation
+	// (the repository checks for active status and matching session)
+	if err == nil {
+		t.Fatalf("expected error for unlinked session, got conversation: %+v", conv)
+	}
+	if conv != nil {
+		t.Errorf("expected nil conversation on error, got %+v", conv)
+	}
+}
+
+// TestResolveQRTokenService tests ResolveQRToken service method
+func TestResolveQRTokenService(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	ownerID := uuid.New()
+	qrCodeID := uuid.New()
+	qrToken := "resolve-token-" + uuid.New().String()
+
+	// Insert active QR code
+	_, err := db.Exec(context.Background(), `
+		INSERT INTO qr_codes (id, owner_id, qr_token, object_type, object_id, is_active)
+		VALUES ($1, $2, $3, $4, $5, true)
+	`, qrCodeID, ownerID, qrToken, "link", uuid.New())
+	if err != nil {
+		t.Fatalf("failed to insert qr code: %v", err)
+	}
+
+	service := services.NewMessageService(db)
+	qr, err := service.ResolveQRToken(context.Background(), qrToken)
+	if err != nil {
+		t.Fatalf("ResolveQRToken failed: %v", err)
+	}
+
+	if qr.ID != qrCodeID {
+		t.Errorf("expected qr ID %s, got %s", qrCodeID, qr.ID)
+	}
+	if !qr.IsActive {
+		t.Error("expected QR code to be active")
+	}
+}
+
+// TestResolveQRTokenInactive tests ResolveQRToken with inactive QR code
+func TestResolveQRTokenInactive(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	ownerID := uuid.New()
+	qrCodeID := uuid.New()
+	qrToken := "inactive-token-" + uuid.New().String()
+
+	// Insert inactive QR code
+	_, err := db.Exec(context.Background(), `
+		INSERT INTO qr_codes (id, owner_id, qr_token, object_type, object_id, is_active)
+		VALUES ($1, $2, $3, $4, $5, false)
+	`, qrCodeID, ownerID, qrToken, "link", uuid.New())
+	if err != nil {
+		t.Fatalf("failed to insert qr code: %v", err)
+	}
+
+	service := services.NewMessageService(db)
+	_, err = service.ResolveQRToken(context.Background(), qrToken)
+	if err == nil {
+		t.Fatal("expected error for inactive QR code")
+	}
+	if !errors.Is(err, services.ErrInactiveFQRToken) {
+		t.Errorf("expected ErrInactiveFQRToken, got %v", err)
+	}
+}
+
+// TestCreateMessageAllOptionalFields tests message creation with all optional fields
+func TestCreateMessageAllOptionalFields(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	ownerID := uuid.New()
+	qrCodeID := uuid.New()
+	conversationID := uuid.New()
+
+	_, err := db.Exec(context.Background(), `
+		INSERT INTO conversations (id, qr_code_id, owner_id, status, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, NOW(), NOW())
+	`, conversationID, qrCodeID, ownerID, "PENDING")
+	if err != nil {
+		t.Fatalf("failed to insert conversation: %v", err)
+	}
+
+	service := services.NewMessageService(db)
+
+	// Create message with all fields including optional ones
+	content := "detailed message"
+	lat := 37.7749
+	lon := -122.4194
+	locText := "San Francisco"
+	sessionID := "test-session"
+	ipAddr := "192.168.1.1"
+
+	msg, err := service.CreateMessage(
+		context.Background(),
+		conversationID,
+		"photo",
+		&content,
+		&lat,
+		&lon,
+		&locText,
+		&sessionID,
+		&ipAddr,
+	)
+
+	if err != nil {
+		t.Fatalf("CreateMessage failed: %v", err)
+	}
+
+	if msg.Content == nil || *msg.Content != content {
+		t.Errorf("expected content %s, got %v", content, msg.Content)
+	}
+	if msg.LocationLatitude == nil || *msg.LocationLatitude != lat {
+		t.Errorf("expected lat %f, got %v", lat, msg.LocationLatitude)
+	}
+	if msg.LocationLongitude == nil || *msg.LocationLongitude != lon {
+		t.Errorf("expected lon %f, got %v", lon, msg.LocationLongitude)
+	}
+	if msg.LocationText == nil || *msg.LocationText != locText {
+		t.Errorf("expected location text %s, got %v", locText, msg.LocationText)
 	}
 }
 

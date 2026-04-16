@@ -163,3 +163,100 @@ func TestNotificationServiceDefaultWorkerURL(t *testing.T) {
 		t.Fatal("notification service should initialize with default URL")
 	}
 }
+
+// TestNotificationServiceMalformedResponse tests handling of malformed worker response
+func TestNotificationServiceMalformedResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("invalid json {"))
+	}))
+	defer server.Close()
+
+	notifSvc := services.NewNotificationService(server.URL)
+	ctx := context.Background()
+
+	// Should handle invalid JSON gracefully
+	err := notifSvc.EnqueueNotification(ctx, "test", "conv-123", "owner@test.com")
+	if err != nil {
+		t.Fatalf("should handle malformed response: %v", err)
+	}
+}
+
+// TestNotificationServiceMultipleTypes tests enqueuing different notification types
+func TestNotificationServiceMultipleTypes(t *testing.T) {
+	callCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload map[string]interface{}
+		json.NewDecoder(r.Body).Decode(&payload)
+		callCount++
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"job_id":   "job-" + string(rune(callCount)),
+			"enqueued": true,
+		})
+	}))
+	defer server.Close()
+
+	notifSvc := services.NewNotificationService(server.URL)
+	ctx := context.Background()
+
+	types := []string{"new_message", "reminder"}
+	for _, notifType := range types {
+		err := notifSvc.EnqueueNotification(ctx, notifType, "conv-123", "owner@test.com")
+		if err != nil {
+			t.Fatalf("failed to enqueue %s: %v", notifType, err)
+		}
+	}
+
+	if callCount != 2 {
+		t.Fatalf("expected 2 enqueue calls, got %d", callCount)
+	}
+}
+
+// TestNotificationServiceContextCancel tests handling of cancelled context
+func TestNotificationServiceContextCancel(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]interface{}{"job_id": "test", "enqueued": true})
+	}))
+	defer server.Close()
+
+	notifSvc := services.NewNotificationService(server.URL)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // Cancel immediately
+
+	err := notifSvc.EnqueueNotification(ctx, "test", "conv-123", "owner@test.com")
+	if err == nil {
+		t.Error("expected error from cancelled context")
+	}
+}
+
+// TestNotificationServiceSuccessResponse verifies successful enqueue with all fields
+func TestNotificationServiceSuccessResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&struct{}{}); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"job_id":   "job-abc-123",
+			"enqueued": true,
+			"error":    "",
+		})
+	}))
+	defer server.Close()
+
+	notifSvc := services.NewNotificationService(server.URL)
+	ctx := context.Background()
+
+	err := notifSvc.EnqueueNotification(ctx, "new_message", "conv-abc", "user@test.com")
+	if err != nil {
+		t.Fatalf("expected success, got error: %v", err)
+	}
+}
