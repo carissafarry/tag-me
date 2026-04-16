@@ -142,6 +142,13 @@ func (h *MessageHandler) CreateMessage(c *gin.Context) {
 		}
 	}
 
+	// Enqueue notification asynchronously
+	// Don't fail the request if enqueue fails - message was already created
+	if err := h.service.EnqueueNewMessageNotification(c.Request.Context(), conversation.ID.String(), conversation.OwnerID.String()); err != nil {
+		// Log but don't fail the response
+		c.Header("X-Enqueue-Warning", "notification queueing failed")
+	}
+
 	// Return response with conversation ID for status tracking
 	// Exclude owner contact and session metadata
 	response := models.CreateMessageResponse{
