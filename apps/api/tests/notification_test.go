@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/carissafarry/tag-me/api/internal/services"
@@ -109,5 +110,56 @@ func TestNotificationServiceValidation(t *testing.T) {
 	err = notifSvc.EnqueueNotification(ctx, "new_message", "", "owner@example.com")
 	if err == nil {
 		t.Error("expected error for missing conversation_id")
+	}
+}
+
+// TestNotificationServiceWorkerError verifies error when worker returns error status
+func TestNotificationServiceWorkerError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte("worker error"))
+	}))
+	defer server.Close()
+
+	notifSvc := services.NewNotificationService(server.URL)
+	ctx := context.Background()
+
+	err := notifSvc.EnqueueNotification(ctx, "new_message", "conv-123", "owner@example.com")
+	if err == nil {
+		t.Fatal("expected error from worker error response")
+	}
+}
+
+// TestNotificationServiceWorkerErrorResponse verifies error field in worker response
+func TestNotificationServiceWorkerErrorResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"job_id":   "test-job",
+			"enqueued": false,
+			"error":    "queue is full",
+		})
+	}))
+	defer server.Close()
+
+	notifSvc := services.NewNotificationService(server.URL)
+	ctx := context.Background()
+
+	err := notifSvc.EnqueueNotification(ctx, "reminder", "conv-456", "owner@example.com")
+	if err == nil {
+		t.Fatal("expected error from worker error field")
+	}
+	if !strings.Contains(err.Error(), "queue is full") {
+		t.Errorf("expected error message to contain 'queue is full', got: %v", err)
+	}
+}
+
+// TestNotificationServiceDefaultWorkerURL verifies default worker URL is used
+func TestNotificationServiceDefaultWorkerURL(t *testing.T) {
+	notifSvc := services.NewNotificationService("")
+	// Just verify it doesn't panic and initializes with default URL
+	if notifSvc == nil {
+		t.Fatal("notification service should initialize with default URL")
 	}
 }

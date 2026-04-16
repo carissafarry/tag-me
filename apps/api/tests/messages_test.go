@@ -800,6 +800,139 @@ func TestMessageCreationEnqueuesNotification(t *testing.T) {
 	}
 }
 
+// TestMessageCreationWithEnqueueError verifies message is created even if enqueue fails
+func TestMessageCreationWithEnqueueError(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	// Create test QR code
+	ownerID := uuid.New()
+	qrCodeID := uuid.New()
+	qrToken := "test-enqueue-error-" + uuid.New().String()
+
+	_, err := db.Exec(context.Background(), `
+		INSERT INTO qr_codes (id, owner_id, qr_token, object_type, object_id, is_active)
+		VALUES ($1, $2, $3, $4, $5, true)
+	`, qrCodeID, ownerID, qrToken, "link", uuid.New())
+	if err != nil {
+		t.Fatalf("Failed to insert test QR code: %v", err)
+	}
+
+	// Create service with failing enqueuer
+	failingEnqueuer := &failingNotificationEnqueuer{}
+	service := services.NewMessageServiceWithDependencies(
+		repository.NewQRCodeRepository(db),
+		repository.NewConversationRepository(db),
+		repository.NewMessageRepository(db),
+		nil,
+		nil,
+		failingEnqueuer,
+		nil,
+	)
+	handler := handlers.NewMessageHandler(service)
+
+	router := gin.New()
+	router.Use(middleware.SessionTracking())
+	router.POST("/messages", handler.CreateMessage)
+
+	payload := map[string]interface{}{
+		"qr_token":     qrToken,
+		"message_type": "text",
+		"content":      "test with failing enqueue",
+	}
+	payloadBytes, _ := json.Marshal(payload)
+
+	req, _ := http.NewRequest("POST", "/messages", strings.NewReader(string(payloadBytes)))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	// Message should still be created even though enqueue failed
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected status 201 despite enqueue error, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// Verify conversation and message were created
+	if countRows(t, db, "conversations") != 1 {
+		t.Fatalf("expected 1 conversation created")
+	}
+	if countRows(t, db, "messages") != 1 {
+		t.Fatalf("expected 1 message created")
+	}
+}
+
+type failingNotificationEnqueuer struct{}
+
+func (f *failingNotificationEnqueuer) EnqueueNotification(ctx context.Context, notificationType string, conversationID string, ownerContact string) error {
+	return services.ErrMessageServiceUnavailable
+}
+
+// TestEnqueueNewMessageNotificationDirect tests service method directly
+func TestEnqueueNewMessageNotificationDirect(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	enqueuer := &notificationEnqueuerSpy{}
+	service := services.NewMessageServiceWithDependencies(
+		repository.NewQRCodeRepository(db),
+		repository.NewConversationRepository(db),
+		repository.NewMessageRepository(db),
+		nil,
+		nil,
+		enqueuer,
+		nil,
+	)
+
+	ctx := context.Background()
+	conversationID := "test-conv-456"
+	ownerContact := "owner@test.com"
+
+	// Call service method directly
+	err := service.EnqueueNewMessageNotification(ctx, conversationID, ownerContact)
+	if err != nil {
+		t.Fatalf("enqueue should not error: %v", err)
+	}
+
+	// Verify enqueue was called
+	if enqueuer.CallCount() != 1 {
+		t.Fatalf("expected 1 enqueue call, got %d", enqueuer.CallCount())
+	}
+
+	notifType, convID, owner := enqueuer.LastCall()
+	if notifType != "new_message" {
+		t.Errorf("expected type=new_message, got %s", notifType)
+	}
+	if convID != conversationID {
+		t.Errorf("expected conversationID=%s, got %s", conversationID, convID)
+	}
+	if owner != ownerContact {
+		t.Errorf("expected owner=%s, got %s", ownerContact, owner)
+	}
+}
+
+// TestEnqueueNewMessageNotificationWithNilEnqueuer tests that nil enqueuer doesn't error
+func TestEnqueueNewMessageNotificationWithNilEnqueuer(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	service := services.NewMessageServiceWithDependencies(
+		repository.NewQRCodeRepository(db),
+		repository.NewConversationRepository(db),
+		repository.NewMessageRepository(db),
+		nil,
+		nil,
+		nil, // nil enqueuer
+		nil,
+	)
+
+	ctx := context.Background()
+	// Should not panic or error when enqueuer is nil
+	err := service.EnqueueNewMessageNotification(ctx, "conv-789", "owner@test.com")
+	if err != nil {
+		t.Fatalf("should not error with nil enqueuer: %v", err)
+	}
+}
+
 // TestResponseSerialization: AC6 - Response never exposes owner contact data
 func TestResponseSerialization(t *testing.T) {
 	db := setupTestDB(t)
