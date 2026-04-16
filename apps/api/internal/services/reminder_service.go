@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/carissafarry/tag-me/api/internal/models"
@@ -62,6 +63,8 @@ type ReminderService struct {
 	config        ReminderConfig
 	now           func() time.Time
 }
+
+const reminderEnqueueTimeout = 2 * time.Second
 
 func NewReminderService(
 	db *pgxpool.Pool,
@@ -244,11 +247,17 @@ func (s *ReminderService) SendReminder(ctx context.Context, request models.Remin
 			Reason:  models.ReminderReasonLimitReached,
 		}, nil
 	case models.ReminderReasonSent:
-		if err := s.enqueue.EnqueueNotification(ctx, "reminder", request.ConversationID, ""); err != nil {
-			// Log enqueue error but don't fail the reminder request
-			// The reminder was already recorded successfully
-			fmt.Printf("warning: failed to enqueue reminder notification: %v\n", err)
-		}
+		conversationID := request.ConversationID
+		go func(conversationID string) {
+			enqueueCtx, cancel := context.WithTimeout(context.Background(), reminderEnqueueTimeout)
+			defer cancel()
+
+			if err := s.enqueue.EnqueueNotification(enqueueCtx, "reminder", conversationID, ""); err != nil {
+				// Log enqueue error but don't fail the reminder request.
+				// The reminder was already recorded successfully.
+				log.Printf("warning: failed to enqueue reminder notification: conversation_id=%s type=reminder err=%v", conversationID, err)
+			}
+		}(conversationID)
 
 		remainingReminder := reservation.RemainingReminder
 		return &models.ReminderResult{
