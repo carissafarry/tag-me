@@ -23,6 +23,42 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+type notificationEnqueuerSpy struct {
+	mu    sync.Mutex
+	calls []struct {
+		notificationType string
+		conversationID   string
+		ownerContact     string
+	}
+}
+
+func (s *notificationEnqueuerSpy) EnqueueNotification(ctx context.Context, notificationType string, conversationID string, ownerContact string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.calls = append(s.calls, struct {
+		notificationType string
+		conversationID   string
+		ownerContact     string
+	}{notificationType, conversationID, ownerContact})
+	return nil
+}
+
+func (s *notificationEnqueuerSpy) CallCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.calls)
+}
+
+func (s *notificationEnqueuerSpy) LastCall() (string, string, string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.calls) > 0 {
+		c := s.calls[len(s.calls)-1]
+		return c.notificationType, c.conversationID, c.ownerContact
+	}
+	return "", "", ""
+}
+
 // setupTestDB creates a test database connection and cleans up tables
 func setupTestDB(t *testing.T) *pgxpool.Pool {
 	dbURL := "postgres://postgres:rahasia@localhost:5432/tag_me_test"
@@ -44,6 +80,7 @@ func setupTestDB(t *testing.T) *pgxpool.Pool {
 		object_type VARCHAR(100) NOT NULL,
 		object_id UUID NOT NULL,
 		is_active BOOLEAN NOT NULL DEFAULT true,
+		plate VARCHAR(255),
 		created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT date_trunc('second', NOW() AT TIME ZONE 'Asia/Jakarta'),
 		updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT date_trunc('second', NOW() AT TIME ZONE 'Asia/Jakarta')
 	);
@@ -490,7 +527,7 @@ func TestCreateMessageRejectsDuplicateConversationWithinCooldown(t *testing.T) {
 	if response.Code != "rate_limited" {
 		t.Fatalf("expected code rate_limited, got %s", response.Code)
 	}
-	if response.Error != "you have reached the limit for creating conversations, please try again later" {
+	if response.Error != "you are creating conversations too quickly, please try again later" {
 		t.Fatalf("unexpected error message: %s", response.Error)
 	}
 	if second.Header().Get("Retry-After") == "" {
@@ -684,14 +721,82 @@ func TestCreateMessageRejectsWhenMessageLimitReached(t *testing.T) {
 		t.Fatalf("failed to decode error response: %v", err)
 	}
 
-	if response.Code != "rate_limited" {
-		t.Fatalf("expected code rate_limited, got %s", response.Code)
+	if response.Code != "daily_limit_exceeded" {
+		t.Fatalf("expected code daily_limit_exceeded, got %s", response.Code)
 	}
 	if countRows(t, deps.db, "conversations") != 0 {
 		t.Fatalf("expected no conversation rows when message limit is reached")
 	}
 	if countRows(t, deps.db, "messages") != 0 {
 		t.Fatalf("expected no message rows when message limit is reached")
+	}
+}
+
+// TestMessageCreationEnqueuesNotification: TAG-12 - Message creation enqueues new_message notification
+func TestMessageCreationEnqueuesNotification(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	// Create test QR code
+	ownerID := uuid.New()
+	qrCodeID := uuid.New()
+	qrToken := "test-enqueue-token-" + uuid.New().String()
+
+	_, err := db.Exec(context.Background(), `
+		INSERT INTO qr_codes (id, owner_id, qr_token, object_type, object_id, is_active)
+		VALUES ($1, $2, $3, $4, $5, true)
+	`, qrCodeID, ownerID, qrToken, "link", uuid.New())
+	if err != nil {
+		t.Fatalf("Failed to insert test QR code: %v", err)
+	}
+
+	// Create service with notification spy
+	enqueuer := &notificationEnqueuerSpy{}
+	service := services.NewMessageServiceWithDependencies(
+		repository.NewQRCodeRepository(db),
+		repository.NewConversationRepository(db),
+		repository.NewMessageRepository(db),
+		nil,
+		nil,
+		enqueuer,
+		nil,
+	)
+	handler := handlers.NewMessageHandler(service)
+
+	router := gin.New()
+	router.Use(middleware.SessionTracking())
+	router.POST("/messages", handler.CreateMessage)
+
+	payload := map[string]interface{}{
+		"qr_token":     qrToken,
+		"message_type": "text",
+		"content":      "test message",
+	}
+	payloadBytes, _ := json.Marshal(payload)
+
+	req, _ := http.NewRequest("POST", "/messages", strings.NewReader(string(payloadBytes)))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected status 201, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// Verify notification was enqueued
+	if enqueuer.CallCount() != 1 {
+		t.Fatalf("expected 1 notification enqueue call, got %d", enqueuer.CallCount())
+	}
+
+	notifType, convID, ownerContact := enqueuer.LastCall()
+	if notifType != "new_message" {
+		t.Errorf("expected notification type 'new_message', got %s", notifType)
+	}
+	if convID == "" {
+		t.Error("notification should include conversation ID")
+	}
+	if ownerContact == "" {
+		t.Error("notification should include owner contact")
 	}
 }
 
@@ -1144,7 +1249,7 @@ func TestGetConversationStatusValid(t *testing.T) {
 		t.Error("response missing created_at")
 	}
 
-	// Verify response has exactly 3 fields, no owner/session data
+	// Verify response has exactly 4 fields, no owner/session data
 	respMap := make(map[string]interface{})
 	json.Unmarshal(w.Body.Bytes(), &respMap)
 
@@ -1152,6 +1257,7 @@ func TestGetConversationStatusValid(t *testing.T) {
 		"conversation_id": true,
 		"status":          true,
 		"created_at":      true,
+		"can_follow_up":   true,
 	}
 	for field := range respMap {
 		if !expectedFields[field] {
