@@ -371,6 +371,7 @@ func setupGuardedMessageTestDeps(t *testing.T, cooldown time.Duration) *guardedM
 		repository.NewMessageRepository(db),
 		messageStateRepository,
 		repository.NewConversationCreationGuardRepository(client),
+		nil, // no notification enqueuer for test
 		&services.MessageConfig{
 			ConversationCreationCooldown: cooldown,
 			MaxMessagesPerSessionQR:    5,

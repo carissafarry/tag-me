@@ -25,7 +25,7 @@ type reminderNotifierSpy struct {
 	calls []string
 }
 
-func (s *reminderNotifierSpy) Enqueue(_ context.Context, conversationID string, notificationType string) error {
+func (s *reminderNotifierSpy) EnqueueNotification(_ context.Context, notificationType string, conversationID string, ownerContact string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -74,7 +74,7 @@ func setupReminderTestDeps(t *testing.T, now time.Time, config *services.Reminde
 		messageStateRepository,
 		cooldownRepository,
 		ipRateLimiter,
-		notifier.Enqueue,
+		notifier,
 		config,
 		func() time.Time { return now.UTC() },
 	)
