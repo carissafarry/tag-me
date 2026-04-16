@@ -933,6 +933,43 @@ func TestEnqueueNewMessageNotificationWithNilEnqueuer(t *testing.T) {
 	}
 }
 
+// TestMessageCreationInvalidQRToken tests handler response for invalid token
+func TestMessageCreationInvalidQRToken(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	service := services.NewMessageService(db)
+	handler := handlers.NewMessageHandler(service)
+
+	router := gin.New()
+	router.Use(middleware.SessionTracking())
+	router.POST("/messages", handler.CreateMessage)
+
+	payload := map[string]interface{}{
+		"qr_token":     "nonexistent-token",
+		"message_type": "text",
+	}
+	payloadBytes, _ := json.Marshal(payload)
+
+	req, _ := http.NewRequest("POST", "/messages", strings.NewReader(string(payloadBytes)))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var errResp models.ErrorResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &errResp); err != nil {
+		t.Fatalf("failed to parse error response: %v", err)
+	}
+
+	if errResp.Code != "invalid_qr_token" {
+		t.Errorf("expected code invalid_qr_token, got %s", errResp.Code)
+	}
+}
+
 // TestResponseSerialization: AC6 - Response never exposes owner contact data
 func TestResponseSerialization(t *testing.T) {
 	db := setupTestDB(t)
