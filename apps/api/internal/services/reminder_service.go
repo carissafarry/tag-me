@@ -30,7 +30,16 @@ type IPRateLimiter interface {
 	IncrementAndCheck(ctx context.Context, ipAddress string, qrID string, maxRequests int) (*models.IPRateLimitState, error)
 }
 
-type NotificationEnqueuer func(ctx context.Context, conversationID string, notificationType string) error
+type NotificationEnqueuer interface {
+	EnqueueNotification(ctx context.Context, notificationType string, conversationID string, ownerContact string) error
+}
+
+// NoOpNotificationEnqueuer is a no-op implementation of NotificationEnqueuer
+type NoOpNotificationEnqueuer struct{}
+
+func (n *NoOpNotificationEnqueuer) EnqueueNotification(ctx context.Context, notificationType string, conversationID string, ownerContact string) error {
+	return nil
+}
 
 type ReminderConfig struct {
 	Cooldown                time.Duration
@@ -109,7 +118,7 @@ func NewReminderServiceWithConversationRepository(
 	}
 
 	if enqueue == nil {
-		enqueue = func(context.Context, string, string) error { return nil }
+		enqueue = &NoOpNotificationEnqueuer{}
 	}
 
 	if now == nil {
@@ -235,8 +244,10 @@ func (s *ReminderService) SendReminder(ctx context.Context, request models.Remin
 			Reason:  models.ReminderReasonLimitReached,
 		}, nil
 	case models.ReminderReasonSent:
-		if err := s.enqueue(ctx, request.ConversationID, "REMINDER"); err != nil {
-			return nil, fmt.Errorf("enqueue reminder notification: %w", err)
+		if err := s.enqueue.EnqueueNotification(ctx, "reminder", request.ConversationID, ""); err != nil {
+			// Log enqueue error but don't fail the reminder request
+			// The reminder was already recorded successfully
+			fmt.Printf("warning: failed to enqueue reminder notification: %v\n", err)
 		}
 
 		remainingReminder := reservation.RemainingReminder
