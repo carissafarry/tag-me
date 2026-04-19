@@ -131,6 +131,12 @@ Scanner notification must create a durable conversation and message event that c
 - DB persistence verified
 - tests cover validation and creation flow
 
+### New Updates
+**Schema changes (2026-04-19):**
+- QR token resolution (`FindByToken`) must JOIN `objects` table — `object_type` no longer on `qr_codes`
+- Set `expires_at = NOW() + interval '24 hours'` on conversation creation
+- Unit test: `expires_at` set correctly at creation
+
 ---
 
 ## Issue 3
@@ -185,6 +191,13 @@ Scanner needs status feedback after submitting a message.
 - status endpoint works end-to-end
 - no owner contact leakage
 - tests updated
+
+### New Updates
+**Schema changes (2026-04-19):**
+- `EXPIRED` added as valid status — supported by DB CHECK constraint
+- Lazy expiry: check `expires_at < NOW()` on each read, UPDATE to EXPIRED in same transaction before returning
+- New edge case: conversation expires between polls
+- New unit tests: EXPIRED state returned when expires_at passed, lazy expiry UPDATE logic
 
 ---
 
@@ -241,6 +254,12 @@ Scanner needs clear feedback after notifying the owner.
 - status logic tested
 - mobile-first UX verified
 
+### New Updates
+**Schema changes (2026-04-19):**
+- `EXPIRED` is now a distinct UI state: copy "No one responded in time" → routes to fallback screen (Issue 6 / TAG-11)
+- State mapping: Waiting (PENDING/DELIVERED), Owner responded (OPENED/ON_THE_WAY/RESOLVED), Expired (EXPIRED)
+- Unit test must cover EXPIRED state-to-UI mapping
+
 ---
 
 ## Issue 5
@@ -257,10 +276,12 @@ Scanner needs a controlled way to send follow-up reminders without enabling spam
 - Enforce rate limiting and cooldown rules
 - Associate reminder eligibility with session + conversation state
 - Trigger follow-up notification job when allowed
+- [Done] Fixed cooldown between reminder sends (e.g., 2 min minimum between reminders)
 
 ### Out of Scope
 - unlimited reminders
 - scanner identity system
+- exponential backoff reminder cooldown (deferred → TAG-17.1; delivery retry backoff done separately in TAG-13)
 
 ### Acceptance Criteria
 1. Scanner can request a reminder only for eligible conversations.
@@ -268,6 +289,7 @@ Scanner needs a controlled way to send follow-up reminders without enabling spam
 3. Reminder count is limited per session/conversation rules.
 4. Ineligible reminder attempts return a clear response.
 5. Successful reminder triggers notification workflow.
+6. Reminder is blocked if conversation is EXPIRED or expires_at < NOW().
 
 ### Edge Cases
 - multiple rapid reminder clicks
@@ -291,6 +313,20 @@ Scanner needs a controlled way to send follow-up reminders without enabling spam
 - abuse controls verified
 - tests updated
 
+### New Updates
+
+**Fix Cooldown Rule (2026-04-16):**
+- Fixed cooldown: 2 min flat between reminder sends — ✅ IMPLEMENTED (`apps/api/internal/services/reminder_service.go`, `Cooldown: 2 * time.Minute`)
+- Exponential backoff for repeated reminders: ❌ NOT implemented — cooldown is flat, not count-based. Deferred to TAG-17.1.
+
+
+**Schema changes (2026-04-19):**
+- Block reminder if conversation status is `EXPIRED` or `expires_at < NOW()`
+- New edge case: reminder attempt on EXPIRED conversation
+- New unit test: EXPIRED/expired conversation blocks reminder with correct response
+
+---
+
 ---
 
 ## Issue 6
@@ -304,10 +340,10 @@ When owner does not respond, scanner needs clear next-step guidance.
 
 ### Scope
 - Build follow-up screen
-- Build fallback screen
+- Build fallback screen — triggered by `EXPIRED` status from backend (explicit signal, not client-side threshold)
 - Show reminder state
 - Show fallback guidance like contacting security
-- Use backend-derived status thresholds
+- EXPIRED status is the primary trigger for fallback screen
 
 ### Out of Scope
 - escalation integrations
@@ -315,7 +351,7 @@ When owner does not respond, scanner needs clear next-step guidance.
 
 ### Acceptance Criteria
 1. Follow-up screen appears when scanner has already sent a notification.
-2. Fallback screen appears for long no-response cases.
+2. Fallback screen appears when conversation status is EXPIRED.
 3. Reminder CTA and fallback guidance are contextually correct.
 4. Copy is concise and action-oriented.
 5. Screen states are mobile friendly.
@@ -339,6 +375,13 @@ When owner does not respond, scanner needs clear next-step guidance.
 - UX states verified
 - tests updated
 
+### New Updates
+**Schema changes (2026-04-19):**
+- `EXPIRED` added as explicit backend status — fallback screen now triggers on `EXPIRED` signal, not client-side timeout
+- Scope updated: fallback screen is driven by `status === 'EXPIRED'` from polling response
+- AC #2 updated: "Fallback screen appears when conversation status is EXPIRED"
+- New unit test: EXPIRED state maps to fallback screen
+
 ---
 
 # EPIC 2 — Owner Authentication & Dashboard
@@ -355,8 +398,9 @@ Owners need secure friction-light authentication.
 ### Scope
 - Implement `POST /auth/request-otp`
 - Implement `POST /auth/verify-otp`
-- Create or retrieve owner identity
-- Return authenticated session/token
+- Create or retrieve owner record in `owners` table (contact, contact_type, dnd_enabled)
+- Store OTP in Redis: key `otp:{contact}`, TTL 5 min; track attempts with `otp_attempts:{contact}`
+- Return signed JWT on successful verify (stateless — no DB session table)
 - Handle invalid/expired OTP safely
 
 ### Out of Scope
@@ -396,6 +440,13 @@ Owners need secure friction-light authentication.
 - OTP flow works end-to-end
 - abuse protections included
 - tests updated
+
+### New Updates
+**Schema changes (2026-04-19):**
+- `owners` table now defined: `id`, `contact`, `contact_type` (phone/email), `dnd_enabled`
+- Scope updated: upsert owner on verify — create if not exists, retrieve if already registered
+- Redis key pattern: `otp:{contact}` (TTL 5 min), attempt tracking: `otp_attempts:{contact}`
+- Auth is stateless — JWT only, no DB session table needed
 
 ---
 
@@ -462,9 +513,10 @@ Owner dashboard needs alert listing and detail views.
 ### Scope
 - Implement `GET /conversations`
 - Implement `GET /conversations/:id`
-- Return owner-scoped conversations
-- Include message content, timestamps, status, optional location
-- Support active/resolved views
+- Before returning list: run bulk lazy expiry UPDATE for this owner (mark `expires_at < NOW()` as EXPIRED)
+- Return owner-scoped conversations only
+- Support status filter: active (`NOT IN ('RESOLVED','EXPIRED') AND expires_at > NOW()`) and closed (RESOLVED or EXPIRED)
+- Include in response: `expires_at`, `opened_at`, `on_the_way_at`, `resolved_at`, message content, timestamps, optional location
 
 ### Out of Scope
 - advanced filtering
@@ -474,8 +526,10 @@ Owner dashboard needs alert listing and detail views.
 1. Authenticated owner can fetch their conversation list.
 2. Authenticated owner can fetch conversation detail.
 3. Only owner-owned conversations are returned.
-4. Response includes fields needed by dashboard/detail UI.
-5. Active and resolved conversation states are available.
+4. EXPIRED conversations appear correctly with EXPIRED status in list.
+5. Active and closed (RESOLVED/EXPIRED) conversation views are available.
+6. Status timestamps included in detail response.
+7. Bulk lazy expiry runs before list — owner always sees up-to-date EXPIRED state.
 
 ### Edge Cases
 - owner with no conversations
@@ -499,6 +553,15 @@ Owner dashboard needs alert listing and detail views.
 - authorization verified
 - tests updated
 
+### New Updates
+**Schema changes (2026-04-19):**
+- `EXPIRED` added as valid status in DB CHECK constraint
+- New columns: `expires_at`, `opened_at`, `on_the_way_at`, `resolved_at` — all must be included in detail response
+- Bulk lazy expiry pattern: `UPDATE conversations SET status='EXPIRED' WHERE owner_id=? AND expires_at < NOW() AND status NOT IN ('RESOLVED','EXPIRED')` before returning list
+- Active filter: `status NOT IN ('RESOLVED','EXPIRED') AND expires_at > NOW()`
+- Closed filter: `status IN ('RESOLVED','EXPIRED')`
+- Partial index added: `idx_conversations_expiry_check` — query must use it
+
 ---
 
 ## Issue 10
@@ -514,7 +577,10 @@ Owner must be able to quickly inspect incoming alerts and respond.
 - Build dashboard with conversation list
 - Build conversation detail screen
 - Show status, timestamp, message, optional location
-- Expose quick actions:
+- Display EXPIRED as distinct status badge (not same as RESOLVED)
+- Active tab: `status NOT IN ('RESOLVED','EXPIRED') AND expires_at > NOW()`
+- Closed tab: RESOLVED + EXPIRED grouped
+- Expose quick actions (hidden for EXPIRED/RESOLVED):
   - Seen
   - On the way
   - Resolved
@@ -554,6 +620,14 @@ Owner must be able to quickly inspect incoming alerts and respond.
 - key owner journeys covered
 - tests updated
 
+### New Updates
+**Schema changes (2026-04-19):**
+- `EXPIRED` is a distinct status — render separate badge, not grouped with RESOLVED
+- Active tab filter: `status NOT IN ('RESOLVED','EXPIRED') AND expires_at > NOW()`
+- Closed tab: RESOLVED + EXPIRED grouped
+- Quick actions (Seen, On the Way, Resolved) must be hidden for EXPIRED and RESOLVED conversations
+- New unit test: EXPIRED conversations show badge, no quick actions
+
 ---
 
 ## Issue 11
@@ -567,12 +641,13 @@ Owner actions must update conversation lifecycle and feed back to scanner.
 
 ### Scope
 - Implement `PATCH /conversations/:id/status`
-- Allow owner actions:
-  - OPENED / Seen
-  - ON_THE_WAY
-  - RESOLVED
-- Validate allowed transitions
-- Persist audit timestamps if needed
+- Block update if conversation is EXPIRED — return 422
+- Enforce valid forward-only transition map:
+  - DELIVERED → OPENED (set `opened_at`)
+  - OPENED → ON_THE_WAY (set `on_the_way_at`)
+  - ON_THE_WAY → RESOLVED (set `resolved_at`)
+- Set timestamp column on each transition
+- Validate owner owns the conversation
 
 ### Out of Scope
 - arbitrary custom status values
@@ -584,10 +659,13 @@ Owner actions must update conversation lifecycle and feed back to scanner.
 3. Updated status is persisted.
 4. Updated status is visible via scanner polling endpoint.
 5. Unauthorized owner cannot update another owner’s conversation.
+6. EXPIRED conversation cannot be updated — returns 422.
+7. `opened_at`, `on_the_way_at`, `resolved_at` timestamps set on respective transitions.
 
 ### Edge Cases
 - repeated same status update
 - resolved conversation re-open attempt
+- update attempt on EXPIRED conversation
 - unauthorized update
 - invalid status value
 
@@ -606,6 +684,14 @@ Owner actions must update conversation lifecycle and feed back to scanner.
 - endpoint implemented
 - transition rules enforced
 - tests updated
+
+### New Updates
+**Schema changes (2026-04-19):**
+- Block PATCH if `status = 'EXPIRED'` — return 422
+- Timestamp columns added: `opened_at`, `on_the_way_at`, `resolved_at` — set on each respective transition
+- Valid forward-only transitions: DELIVERED→OPENED (set `opened_at`), OPENED→ON_THE_WAY (set `on_the_way_at`), ON_THE_WAY→RESOLVED (set `resolved_at`)
+- New edge case: update attempt on EXPIRED conversation → 422
+- New unit test: EXPIRED conversation blocked, timestamp columns set on each transition
 
 ---
 
@@ -710,6 +796,14 @@ Owner needs to register a vehicle/object and manage QR-linked assets.
 - CRUD endpoints implemented
 - authorization verified
 - tests updated
+
+### New Updates
+**Schema changes (2026-04-19):**
+- `objects` table added: `id`, `owner_id` (FK→owners), `name`, `object_type` (car/motorcycle/bag/other), `plate` (nullable, unique)
+- `object_type` moved from `qr_codes` to `objects` — `FindByToken` query must JOIN `objects`
+- `DELETE /objects/:id`: blocked if any conversation with this object's QR code is not RESOLVED or EXPIRED — return 409
+- App-level check before delete: query `conversations` for active status; `ON DELETE RESTRICT` on qr_codes.object_id enforces at DB layer too
+- New edge case: delete with active conversations → 409 (already in spec)
 
 ---
 
@@ -883,6 +977,14 @@ event=notification_sent type=new_message conversation_id=...
 
 ---
 
+### New Updates
+- BullMQ pipeline fully implemented in `tag-me-worker` repo (queue, processor, handlers, DLQ, retry)
+- Simulated delivery only — no real provider yet
+- No dedicated PR; built as part of repo init alongside TAG-13 work
+- TAG-16 status in Linear still shows Backlog — needs manual update
+
+---
+
 ## Issue 15.1
 **Title:** [API] Notification enqueue integration from conversation events  
 **Priority:** High  
@@ -920,6 +1022,14 @@ enqueueNotification(payload)
 ### Definition of Done
 - API successfully triggers worker jobs
 - End-to-end flow works
+
+---
+
+### New Updates
+- Implemented in [PR #10](https://github.com/carissafarry/tag-me/pull/10)
+- `enqueueNotification` helper added to both POST /messages and POST /conversations/:id/reminder
+- Async goroutine with panic recovery — enqueue failure does not block API response
+- Payload includes: `type`, `conversation_id`, `owner_contact`
 
 ---
 
@@ -995,6 +1105,16 @@ notification_failures
 
 ---
 
+### New Updates 
+**[DONE] Fix Retry Logic (2026-04-16):**
+- Implemented in [PR #1 (worker repo)](https://github.com/carissafarry/tag-me-worker/pull/1)
+- BullMQ retry: 3 attempts, exponential backoff
+- Structured failure logs: `event=notification_failed job_id=... reason=...`
+- 30% simulated random failure used to verify retry behavior
+- DLQ-style: failed jobs visible in BullMQ failed set; no separate DB table
+
+---
+
 # EPIC 5 — Abuse Prevention & Reliability
 
 ## Issue 17
@@ -1009,6 +1129,8 @@ Anonymous messaging requires anti-abuse controls from day one.
 ### Scope
 - Track scanner session
 - Enforce IP/session/QR rate limits
+- Enforce per-IP global limit (block after N requests across all QRs, not just per QR)
+- Enforce per-conversation limit (max messages per conversation)
 - Support max 2–3 messages per session rule
 - Enforce delay/cooldown between sends
 - Store rules in Redis-backed mechanism
@@ -1019,33 +1141,52 @@ Anonymous messaging requires anti-abuse controls from day one.
 
 ### Acceptance Criteria
 1. Scanner message creation is rate-limited by session/IP/QR rules.
-2. Scanner cannot exceed configured message count threshold.
-3. Cooldown prevents rapid repeated sends.
-4. Rate limit failures return safe, user-friendly response.
-5. Reminder flow respects separate or shared cooldown policy.
+2. Scanner cannot exceed configured message count threshold per session.
+3. Scanner IP is limited globally across all QRs (prevents multi-QR scanning abuse).
+4. Conversations are limited to max messages per conversation (prevents hammering single target).
+5. Cooldown prevents rapid repeated sends.
+6. Rate limit failures return safe, user-friendly response.
+7. Reminder flow respects separate or shared cooldown policy.
 
 ### Edge Cases
 - Redis unavailable
 - multiple tabs from same session
 - same QR hit from different IPs
 - cooldown boundary timing
+- IP limit boundary with concurrent requests
+- conversation limit boundary
 
 ### Unit Test Checklist
 - session id handling
-- message count threshold logic
+- message count threshold logic (per-session + per-conversation)
+- global IP limit logic
 - cooldown logic
 - rate limit response mapping
 - Redis fallback/error handling strategy
 
 ### Integration Test Checklist
-- repeated message attempts hit rate limit
+- repeated message attempts hit session rate limit
 - cooldown blocks rapid retry
 - normal requests still succeed under threshold
+- multi-QR abuse from single IP blocked by global IP limit
+- per-conversation limit enforced across multiple sessions
 
 ### Definition of Done
-- anti-abuse rules implemented
+- anti-abuse rules implemented (session, IP global, per-conversation)
 - Redis integration verified
 - tests updated
+
+### New Updates
+**Rate limiting enhancements (2026-04-19):**
+- Added per-IP global limit: block after N requests across all QRs (not just per-QR) — prevents multi-QR scanning abuse
+- Added per-conversation message limit: max messages per conversation — prevents hammering single target
+- Defined session rule: max 3 messages per session
+- Added explicit cooldown enforcement between sends
+- AC #3, #4 added for global IP and per-conversation limits
+- New edge cases: IP limit boundary under concurrent requests, conversation limit boundary
+- New unit tests: global IP limit logic, per-conversation + per-session threshold logic
+- New integration tests: multi-QR abuse from single IP blocked by global IP limit, per-conversation limit across enforced accross multiple sessions
+- Definition of Done: anti-abuse rules implemented including session, IP global, and per-conversation (all redis-integrated)
 
 ---
 
@@ -1098,3 +1239,77 @@ Failure states must remain understandable and privacy-safe.
 - fallback handling standardized
 - frontend/backend error alignment verified
 - tests updated
+
+---
+
+# FUTURE ENHANCEMENTS (Post-MVP)
+
+## Issue 19
+**Title:** [OPS] Rate limit observability and alerting  
+**Priority:** Medium  
+**Estimate:** M  
+**Labels:** ops, observability, logging, monitoring
+
+### Why
+Rate limit rejections must be visible and actionable to detect abuse patterns early.
+
+### Scope
+- Log all rate limit rejections (IP, session, conversation level)
+- Track metrics: blocks/min per source, top IPs, patterns
+- Structured logging for analytics
+- Alert ops if sustained abuse detected
+
+### Out of Scope
+- full fraud dashboard
+- real-time analytics UI
+
+### Acceptance Criteria
+1. Every rate limit rejection is logged with source, rule violated, timestamp.
+2. Logs are queryable by IP, session, conversation.
+3. Metrics available for observability dashboard.
+4. Alert threshold configurable for sustained abuse.
+
+---
+
+## Issue 20
+**Title:** [DOCS] Rate limit configuration documentation and tuning CLI  
+**Priority:** Medium  
+**Estimate:** S  
+**Labels:** docs, ops, configuration
+
+### Why
+Rate limit windows, thresholds, and rationale must be documented; ops must tune limits without redeployment.
+
+### Scope
+- Document all rate limit windows, thresholds, and rationale
+- Provide admin CLI or config interface to adjust limits
+- Example: `rtk api config rate-limit --key session_max_messages --value 5`
+
+### Out of Scope
+- UI-based admin console
+- per-user override system
+
+### Acceptance Criteria
+1. All rate limit rules documented with rationale.
+2. Admin can adjust limits without redeployment.
+3. Changes take effect within 1 min.
+
+---
+
+## Enhancement: Exponential backoff for reminder cooldown
+**Title:** [API] Exponential backoff for reminder cooldown  
+**Priority:** Medium  
+**Estimate:** S  
+**Why:** Current cooldown is flat 2 min between every reminder send. Escalating wait time per attempt (1st → 2min, 2nd → 4min, 3rd → 8min) reduces repeat spam more effectively than a fixed window.  
+**Scope:** Extend Issue 5 / TAG-10 — change flat `Cooldown: 2 * time.Minute` to count-based `cooldown * 2^(count-1)` in `reminder_service.go`. Lua script in `reminder.go` also needs to receive and apply the computed cooldown per attempt.  
+**Out of scope:** Delivery retry backoff (Issue 16 / TAG-13) — already done in worker, separate concern.  
+**No schema change needed.** EXPIRED conversations already block reminders entirely before cooldown logic runs.
+
+---
+
+## Backlog: Geographic Detection & IP Reputation
+**Title:** [API] Geographic filtering and IP reputation integration  
+**Priority:** Low  
+**Why:** Defer until abuse patterns emerge post-launch  
+**Scope:** Block by country, integrate with IP blocklist services  
+**Defer:** Post-MVP, post-incident
