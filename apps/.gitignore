@@ -1,4 +1,4 @@
 ./api/.env
 ./api/tmp
-./api/coverage.out
+*.out
 ./worker/node_modules

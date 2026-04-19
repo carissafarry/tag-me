@@ -5,3 +5,7 @@
 /workflows
 # Added by code-review-graph
 .code-review-graph/
+*.cursor*
+.opencode
+*rules
+*.json
