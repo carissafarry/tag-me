@@ -16,11 +16,15 @@
     },
     "code-review-graph": {
       "command": "uvx",
-      "args": [
-        "code-review-graph",
-        "serve"
-      ],
+      "args": ["code-review-graph", "serve"],
       "type": "stdio"
+    },
+    "token-savior-recall": {
+      "command": "/Users/carissafarry/.local/bin/token-savior",
+      "env": {
+        "WORKSPACE_ROOTS": "/Users/carissafarry/Documents/Projects/Personal/tag-me",
+        "TOKEN_SAVIOR_CLIENT": "claude-code"
+      }
     }
   }
 }
