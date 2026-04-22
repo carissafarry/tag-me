@@ -94,7 +94,15 @@ func main() {
 	)
 	reminderHandler := handlers.NewReminderHandler(reminderService)
 
+	// Initialize auth service and handler
+	ownerRepository := repository.NewOwnerRepository(db)
+	otpRepository := repository.NewOTPRepository(redisClient)
+	authService := services.NewAuthService(ownerRepository, otpRepository, appConfig.Auth.JWTSecret, appConfig.Auth.JWTExpiry)
+	authHandler := handlers.NewAuthHandler(authService)
+
 	// Routes
+	router.POST("/auth/request-otp", authHandler.RequestOTP)
+	router.POST("/auth/verify-otp", authHandler.VerifyOTP)
 	router.GET("/scan", messageHandler.GetScan)
 	router.POST("/messages", messageHandler.CreateMessage)
 	router.GET("/conversations/:id/status", messageHandler.GetConversationStatus)
