@@ -2,6 +2,10 @@
 ./apps/api/tmp/main
 .env
 *.md
+.*rules
+/apps/api/*.out
+!/docs/backlog/*.md
+/docs/backlog/*todo.md
 /workflows
 # Added by code-review-graph
 .code-review-graph/
