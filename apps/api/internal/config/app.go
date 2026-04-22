@@ -11,6 +11,7 @@ type App struct {
 	Message  Message
 	Reminder Reminder
 	Worker   Worker
+	Auth     Auth
 }
 
 type Server struct {
@@ -48,6 +49,14 @@ type Worker struct {
 	URL string
 }
 
+type Auth struct {
+	JWTSecret     string
+	JWTExpiry     time.Duration
+	OTPTTL        time.Duration
+	OTPAttemptTTL time.Duration
+	MaxOTPAttempts int64
+}
+
 // Load reads configuration from environment variables and returns an App struct with the values.
 func Load() App {
 	return App{
@@ -67,6 +76,13 @@ func Load() App {
 			CORS: DefaultCORS(),
 		},
 		Session: DefaultSession(),
+		Auth: Auth{
+			JWTSecret:      String("JWT_SECRET", ""),
+			JWTExpiry:      DurationFromSeconds("JWT_EXPIRY_SECONDS", 24*time.Hour),
+			OTPTTL:         5 * time.Minute,
+			OTPAttemptTTL:  15 * time.Minute,
+			MaxOTPAttempts: 5,
+		},
 		Message: Message{
 			ConversationCreationCooldown: DurationFromSeconds("CONVERSATION_CREATION_COOLDOWN_SECONDS", 60*time.Second),
 			MaxMessagesPerSessionQR:      PositiveInt("MESSAGE_MAX_PER_SESSION_QR", 5),
