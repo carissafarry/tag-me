@@ -3,15 +3,16 @@ package config
 import "time"
 
 type App struct {
-	Server   Server
-	Database Database
-	Redis    Redis
-	HTTP     HTTP
-	Session  Session
-	Message  Message
-	Reminder Reminder
-	Worker   Worker
-	Auth     Auth
+	Environment string
+	Server      Server
+	Database    Database
+	Redis       Redis
+	HTTP        HTTP
+	Session     Session
+	Message     Message
+	Reminder    Reminder
+	Worker      Worker
+	Auth        Auth
 }
 
 type Server struct {
@@ -49,17 +50,29 @@ type Worker struct {
 	URL string
 }
 
+type JWT struct {
+	JWTSecret        string
+	JWTExpiry        time.Duration
+	JWTRefreshExpiry time.Duration
+}
+
+type OTP struct {
+	OTPMaxRequestAttempts int
+	OTPCodeTTL            time.Duration
+	OTPVerifyCodeTTL      time.Duration
+	OTPAttemptTTL         time.Duration
+	OTPMaxVerifyAttempts  int
+}
+
 type Auth struct {
-	JWTSecret     string
-	JWTExpiry     time.Duration
-	OTPTTL        time.Duration
-	OTPAttemptTTL time.Duration
-	MaxOTPAttempts int64
+	JWT JWT
+	OTP OTP
 }
 
 // Load reads configuration from environment variables and returns an App struct with the values.
 func Load() App {
 	return App{
+		Environment: String("ENV", "development"),
 		Server: Server{
 			Port: String("PORT", "8080"),
 		},
@@ -77,11 +90,18 @@ func Load() App {
 		},
 		Session: DefaultSession(),
 		Auth: Auth{
-			JWTSecret:      String("JWT_SECRET", ""),
-			JWTExpiry:      DurationFromSeconds("JWT_EXPIRY_SECONDS", 24*time.Hour),
-			OTPTTL:         5 * time.Minute,
-			OTPAttemptTTL:  15 * time.Minute,
-			MaxOTPAttempts: 5,
+			JWT: JWT{
+				JWTSecret:        String("JWT_SECRET", "secret-jwt-signing-key"),
+				JWTExpiry:        DurationFromSeconds("JWT_EXPIRY_SECONDS", 24*time.Hour),
+				JWTRefreshExpiry: DurationFromSeconds("JWT_REFRESH_EXPIRY_SECONDS", 7*24*time.Hour),
+			},
+			OTP: OTP{
+				OTPMaxRequestAttempts: PositiveInt("OTP_MAX_REQUEST_ATTEMPTS", 3),
+				OTPCodeTTL:            DurationFromSeconds("OTP_TTL", 3*time.Minute),
+				OTPVerifyCodeTTL:      DurationFromSeconds("OTP_VERIFY_CODE_TTL", 3*time.Minute),
+				OTPAttemptTTL:         DurationFromSeconds("OTP_ATTEMPT_TTL", 60*time.Minute),
+				OTPMaxVerifyAttempts:  PositiveInt("OTP_MAX_VERIFY_ATTEMPTS", 3),
+			},
 		},
 		Message: Message{
 			ConversationCreationCooldown: DurationFromSeconds("CONVERSATION_CREATION_COOLDOWN_SECONDS", 60*time.Second),

@@ -9,8 +9,21 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+type OTPRepositoryConfig struct {
+	OTPMaxRequestAttempts int
+	OTPCodeTTL            time.Duration
+	OTPVerifyCodeTTL      time.Duration
+	OTPAttemptTTL         time.Duration
+	OTPMaxVerifyAttempts  int
+}
+
 type OTPRepository struct {
-	client *redis.Client
+	client                redis.Cmdable
+	OTPMaxRequestAttempts int64
+	OTPCodeTTL            time.Duration
+	OTPVerifyCodeTTL      time.Duration
+	OTPAttemptTTL         time.Duration
+	OTPMaxVerifyAttempts  int64
 }
 
 // OTPRequest stores OTP code + metadata
@@ -27,8 +40,15 @@ type OTPVerify struct {
 	IsBlocked bool      `json:"is_blocked"`
 }
 
-func NewOTPRepository(client *redis.Client) *OTPRepository {
-	return &OTPRepository{client: client}
+func NewOTPRepository(client redis.Cmdable, config *OTPRepositoryConfig) *OTPRepository {
+	return &OTPRepository{
+		client:                client,
+		OTPMaxRequestAttempts: int64(config.OTPMaxRequestAttempts),
+		OTPCodeTTL:            config.OTPCodeTTL,
+		OTPVerifyCodeTTL:      config.OTPVerifyCodeTTL,
+		OTPAttemptTTL:         config.OTPAttemptTTL,
+		OTPMaxVerifyAttempts:  int64(config.OTPMaxVerifyAttempts),
+	}
 }
 
 // StoreOTPRequest stores OTP request (3 min TTL)
@@ -39,7 +59,7 @@ func (r *OTPRepository) StoreOTPRequest(ctx context.Context, contact, code strin
 		CreatedAt: time.Now(),
 	}
 	data, _ := json.Marshal(req)
-	return r.client.Set(ctx, key, data, 3*time.Minute).Err()
+	return r.client.Set(ctx, key, data, r.OTPCodeTTL).Err()
 }
 
 // GetOTPRequest retrieves OTP request
@@ -75,7 +95,7 @@ func (r *OTPRepository) IncrOTPRequestCount(ctx context.Context, contact string)
 	}
 	// Set TTL if first increment (1 hour)
 	if count == 1 {
-		_ = r.client.Expire(ctx, key, 60*time.Minute).Err()
+		_ = r.client.Expire(ctx, key, r.OTPAttemptTTL).Err()
 	}
 	return count, nil
 }
@@ -88,7 +108,7 @@ func (r *OTPRepository) InitVerifyOTPRedis(ctx context.Context, contact string) 
 		return err
 	}
 	if req == nil {
-		return fmt.Errorf("otp_request not found")
+		return fmt.Errorf("otp request not found for contact: %s", contact)
 	}
 
 	key := fmt.Sprintf("otp_verify:%s", contact)
@@ -99,7 +119,7 @@ func (r *OTPRepository) InitVerifyOTPRedis(ctx context.Context, contact string) 
 		IsBlocked: false,
 	}
 	data, _ := json.Marshal(verify)
-	return r.client.Set(ctx, key, data, 3*time.Minute).Err() 
+	return r.client.Set(ctx, key, data, r.OTPVerifyCodeTTL).Err()
 }
 
 // GetVerify retrieves otp_verify
@@ -135,7 +155,7 @@ func (r *OTPRepository) IncrVerifyOTPAttempt(ctx context.Context, contact string
 
 	verify.Attempt++
 	newData, _ := json.Marshal(verify)
-	if err := r.client.Set(ctx, key, newData, 3*time.Minute).Err(); err != nil {
+	if err := r.client.Set(ctx, key, newData, r.OTPVerifyCodeTTL).Err(); err != nil {
 		return nil, err
 	}
 	return &verify, nil

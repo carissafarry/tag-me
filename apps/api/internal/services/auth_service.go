@@ -17,16 +17,17 @@ import (
 )
 
 var (
-	ErrInvalidContact         = errors.New("invalid contact format")
-	ErrInvalidOTP             = errors.New("invalid or expired otp")
-	ErrTooManyAttempts        = errors.New("too many attempts, please try again later")
-	ErrTooManyRequests        = errors.New("too many requests, please try again later")
-	ErrContactRequired        = errors.New("contact is required")
-	ErrContactTypeRequired    = errors.New("contact_type is required")
-	ErrOTPRequired            = errors.New("otp is required")
-	ErrOTPNotFound            = errors.New("otp not found or expired")
-	ErrAccountBlocked         = errors.New("account locked, contact support")
-	ErrAccountDisabled        = errors.New("account disabled")
+	ErrInvalidRequest      = errors.New("invalid request payload")
+	ErrInvalidContact      = errors.New("invalid contact format")
+	ErrInvalidOTP          = errors.New("invalid or expired otp")
+	ErrTooManyAttempts     = errors.New("too many attempts, please try again later")
+	ErrTooManyRequests     = errors.New("too many requests, please try again later")
+	ErrContactRequired     = errors.New("contact is required")
+	ErrContactTypeRequired = errors.New("contact_type is required")
+	ErrOTPRequired         = errors.New("otp is required")
+	ErrOTPNotFound         = errors.New("otp not found or expired")
+	ErrAccountBlocked      = errors.New("account locked, contact support")
+	ErrAccountDisabled     = errors.New("account disabled")
 )
 
 type AuthService struct {
@@ -42,14 +43,14 @@ type OTPRequest struct {
 	ContactType string `json:"contact_type" binding:"required"`
 }
 
-// OTPVerify 
+// OTPVerify
 type OTPVerifyRequest struct {
 	Contact string `json:"contact" binding:"required"`
 	OTP     string `json:"otp" binding:"required"`
 }
 
 type OTPVerifyResponse struct {
-	Token string `json:"token"`
+	Token string        `json:"token"`
 	Owner *models.Owner `json:"owner"`
 }
 
@@ -114,8 +115,8 @@ func (s *AuthService) RequestOTP(ctx context.Context, req *OTPRequest) error {
 	if err != nil {
 		return err
 	}
-	if count > 3 {
-		// Exceeded 3 requests per hour
+	if count > s.otpRepo.OTPMaxRequestAttempts {
+		// Exceeded maximum requests per hour
 		return ErrTooManyRequests
 	}
 
@@ -142,10 +143,10 @@ func (s *AuthService) RequestOTP(ctx context.Context, req *OTPRequest) error {
 // 3. Validate code matches
 // 4. On match: upsert owner, delete keys, sign JWT → 200
 // 5. On mismatch: increment attempt
-//    - If attempt < 3: return 401
-//    - If attempt >= 3: query DB for owner existence
-//      - Existing: set is_blocked + disable account → 403
-//      - New: reset counter → 401 allow retry
+//   - If attempt < 3: return 401
+//   - If attempt >= 3: query DB for owner existence
+//   - Existing: set is_blocked + disable account → 403
+//   - New: reset counter → 401 allow retry
 func (s *AuthService) VerifyOTP(ctx context.Context, req *OTPVerifyRequest) (*OTPVerifyResponse, error) {
 	if req.Contact == "" {
 		return nil, ErrContactRequired
@@ -163,7 +164,7 @@ func (s *AuthService) VerifyOTP(ctx context.Context, req *OTPVerifyRequest) (*OT
 		// Initialize from otp_request
 		if err := s.otpRepo.InitVerifyOTPRedis(ctx, req.Contact); err != nil {
 			// otp_request not found or expired
-			return nil, ErrOTPNotFound
+			return nil, err
 		}
 		// Fetch the newly created verify
 		verify, err = s.otpRepo.GetVerify(ctx, req.Contact)
@@ -214,7 +215,7 @@ func (s *AuthService) VerifyOTP(ctx context.Context, req *OTPVerifyRequest) (*OT
 	}
 
 	// Check if exceeded max attempts (3)
-	if verify.Attempt >= 3 {
+	if verify.Attempt >= s.otpRepo.OTPMaxVerifyAttempts {
 		// Query DB to check if owner exists
 		owner, err := s.ownerRepo.GetByContact(ctx, req.Contact)
 		if err != nil {
@@ -234,7 +235,7 @@ func (s *AuthService) VerifyOTP(ctx context.Context, req *OTPVerifyRequest) (*OT
 		}
 
 		// New contact - reset attempt counter, allow retry with new OTP
-		if err := s.otpRepo.ResetAttempt(ctx, req.Contact); err != nil {
+		if err := s.otpRepo.DeleteAll(ctx, req.Contact); err != nil {
 			return nil, err
 		}
 		return nil, ErrInvalidOTP

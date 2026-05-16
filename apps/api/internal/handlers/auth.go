@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/carissafarry/tag-me/api/internal/models"
 	"github.com/carissafarry/tag-me/api/internal/services"
 )
 
@@ -21,15 +22,21 @@ func NewAuthHandler(authService *services.AuthService) *AuthHandler {
 // Returns 200 on success, 400 on invalid input, 429 on rate limit
 func (h *AuthHandler) RequestOTP(c *gin.Context) {
 	var req services.OTPRequest
-	if err := c.BindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse{
+			Error: services.ErrInvalidRequest.Error(),
+			Code:  "validation_error",
+		})
 		return
 	}
 
 	if err := h.authService.RequestOTP(c.Request.Context(), &req); err != nil { // TODO
 		switch err {
 		case services.ErrContactRequired, services.ErrContactTypeRequired, services.ErrInvalidContact:
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			c.JSON(http.StatusBadRequest, models.ErrorResponse{
+				Error: err.Error(),
+				Code:  "validation_error",
+			})
 		case services.ErrTooManyRequests:
 			// Rate limited (cooldown or hourly limit)
 			c.Header("Retry-After", "180") // 3 minutes
@@ -47,8 +54,11 @@ func (h *AuthHandler) RequestOTP(c *gin.Context) {
 // Returns 200 on success, 400 on expired OTP, 401 on invalid OTP, 403 on account locked
 func (h *AuthHandler) VerifyOTP(c *gin.Context) {
 	var req services.OTPVerifyRequest
-	if err := c.BindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse{
+			Error: services.ErrInvalidRequest.Error(),
+			Code:  "validation_error",
+		})
 		return
 	}
 

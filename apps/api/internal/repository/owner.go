@@ -2,9 +2,11 @@ package repository
 
 import (
 	"context"
+	"errors"
 
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/carissafarry/tag-me/api/internal/models"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type OwnerRepository struct {
@@ -20,9 +22,9 @@ func (r *OwnerRepository) UpsertByContact(ctx context.Context, contact, contactT
 	owner := &models.Owner{}
 	query := `
 		INSERT INTO owners (contact, contact_type, dnd_enabled, is_active, created_at, updated_at)
-		VALUES ($1, $2, false, true, NOW(), NOW())
+		VALUES ($1, $2, false, true, date_trunc('second', NOW() AT TIME ZONE 'Asia/Jakarta'), date_trunc('second', NOW() AT TIME ZONE 'Asia/Jakarta'))
 		ON CONFLICT (contact) DO UPDATE
-		SET updated_at = NOW()
+		SET updated_at = date_trunc('second', NOW() AT TIME ZONE 'Asia/Jakarta')  
 		RETURNING id, contact, contact_type, dnd_enabled, is_active, created_at, updated_at
 	`
 	err := r.db.QueryRow(ctx, query, contact, contactType).Scan(
@@ -41,6 +43,7 @@ func (r *OwnerRepository) UpsertByContact(ctx context.Context, contact, contactT
 }
 
 // GetByContact retrieves owner by contact (phone/email).
+// Returns (nil, nil) if owner not found.
 func (r *OwnerRepository) GetByContact(ctx context.Context, contact string) (*models.Owner, error) {
 	owner := &models.Owner{}
 	query := `SELECT id, contact, contact_type, dnd_enabled, is_active, created_at, updated_at FROM owners WHERE contact = $1`
@@ -54,12 +57,16 @@ func (r *OwnerRepository) GetByContact(ctx context.Context, contact string) (*mo
 		&owner.UpdatedAt,
 	)
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
 		return nil, err
 	}
 	return owner, nil
 }
 
 // GetByID retrieves owner by ID.
+// Returns (nil, nil) if owner not found.
 func (r *OwnerRepository) GetByID(ctx context.Context, id string) (*models.Owner, error) {
 	owner := &models.Owner{}
 	query := `SELECT id, contact, contact_type, dnd_enabled, is_active, created_at, updated_at FROM owners WHERE id = $1`
@@ -73,6 +80,9 @@ func (r *OwnerRepository) GetByID(ctx context.Context, id string) (*models.Owner
 		&owner.UpdatedAt,
 	)
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
 		return nil, err
 	}
 	return owner, nil
