@@ -94,7 +94,24 @@ func main() {
 	)
 	reminderHandler := handlers.NewReminderHandler(reminderService)
 
+	// Initialize auth service and handler
+	otpRepository := repository.NewOTPRepository(
+		redisClient,
+		&repository.OTPRepositoryConfig{
+			OTPMaxRequestAttempts: appConfig.Auth.OTP.OTPMaxRequestAttempts,
+			OTPCodeTTL:            appConfig.Auth.OTP.OTPCodeTTL,
+			OTPVerifyCodeTTL:      appConfig.Auth.OTP.OTPVerifyCodeTTL,
+			OTPAttemptTTL:         appConfig.Auth.OTP.OTPAttemptTTL,
+			OTPMaxVerifyAttempts:  appConfig.Auth.OTP.OTPMaxVerifyAttempts,
+		},
+	)
+	ownerRepository := repository.NewOwnerRepository(db)
+	authService := services.NewAuthService(ownerRepository, otpRepository, appConfig.Auth.JWT.JWTSecret, appConfig.Auth.JWT.JWTExpiry)
+	authHandler := handlers.NewAuthHandler(authService)
+
 	// Routes
+	router.POST("/auth/request-otp", authHandler.RequestOTP)
+	router.POST("/auth/verify-otp", authHandler.VerifyOTP)
 	router.GET("/scan", messageHandler.GetScan)
 	router.POST("/messages", messageHandler.CreateMessage)
 	router.GET("/conversations/:id/status", messageHandler.GetConversationStatus)

@@ -44,7 +44,7 @@ func (h *MessageHandler) CreateMessage(c *gin.Context) {
 	// Validate request payload
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse{
-			Error: "invalid request payload",
+			Error: services.ErrInvalidRequest.Error(),
 			Code:  "validation_error",
 		})
 		return

@@ -11,12 +11,14 @@ CREATE TABLE owners (
     contact      VARCHAR(255) NOT NULL UNIQUE,
     contact_type VARCHAR(20) NOT NULL DEFAULT 'phone'
         CHECK (contact_type IN ('phone', 'email')),
+    is_active  BOOLEAN NOT NULL DEFAULT true,
     dnd_enabled  BOOLEAN NOT NULL DEFAULT false,
     created_at   TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT date_trunc('second', NOW() AT TIME ZONE 'Asia/Jakarta'),
     updated_at   TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT date_trunc('second', NOW() AT TIME ZONE 'Asia/Jakarta')
 );
 
 CREATE INDEX idx_owners_contact ON owners(contact);
+CREATE INDEX idx_owners_active ON owners(is_active);
 
 -- Objects: physical items owned and tagged with QR codes (vehicles, bags, etc.)
 -- ON DELETE CASCADE: deleting an owner deletes their objects; deleting an object deletes its QR code and conversations
