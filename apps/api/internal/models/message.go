@@ -8,12 +8,16 @@ import (
 
 // Conversation represents a group of messages around a QR code scan
 type Conversation struct {
-	ID        uuid.UUID `json:"id"`
-	QRCodeID  uuid.UUID `json:"qr_code_id"`
-	OwnerID   uuid.UUID `json:"-"` // Never expose to scanner
-	Status    string    `json:"status"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID         uuid.UUID `json:"id"`
+	QRCodeID   uuid.UUID `json:"qr_code_id"`
+	OwnerID    uuid.UUID `json:"-"` // Never expose to scanner
+	Status     string    `json:"status"`
+	ExpiresAt  string    `json:"expires_at,omitempty"`
+	OpenedAt   string    `json:"opened_at,omitempty"`
+	OnTheWayAt string    `json:"on_the_way_at,omitempty"`
+	ResolvedAt string    `json:"resolved_at,omitempty"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
 }
 
 // Message represents an individual scanner message
