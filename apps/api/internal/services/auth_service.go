@@ -87,53 +87,53 @@ func (s *AuthService) GenerateOTP() (string, error) {
 // 1. Check cooldown (otp_request exists) → 429
 // 2. Check hourly rate limit (request_count >= 3) → 429
 // 3. Generate code, store, increment counter
-func (s *AuthService) RequestOTP(ctx context.Context, req *OTPRequest) error {
+func (s *AuthService) RequestOTP(ctx context.Context, req *OTPRequest) (string, error) {
 	if req.Contact == "" {
-		return ErrContactRequired
+		return "", ErrContactRequired
 	}
 	if req.ContactType == "" {
-		return ErrContactTypeRequired
+		return "", ErrContactTypeRequired
 	}
 
 	// Validate contact_type
 	if req.ContactType != "phone" && req.ContactType != "email" {
-		return ErrInvalidContact
+		return "", ErrInvalidContact
 	}
 
 	// Check cooldown: otp_request:{contact} still exists (3-min TTL)
 	existing, err := s.otpRepo.GetOTPRequest(ctx, req.Contact)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if existing != nil {
 		// Request exists, still in 3-min cooldown
-		return ErrTooManyRequests
+		return "", ErrTooManyRequests
 	}
 
 	// Check hourly rate limit: otp_request_count:{contact}
 	count, err := s.otpRepo.IncrOTPRequestCount(ctx, req.Contact)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if count > s.otpRepo.OTPMaxRequestAttempts {
 		// Exceeded maximum requests per hour
-		return ErrTooManyRequests
+		return "", ErrTooManyRequests
 	}
 
 	// Generate OTP code
 	code, err := s.GenerateOTP()
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	// Store OTP request (3 min TTL)
 	if err := s.otpRepo.StoreOTPRequest(ctx, req.Contact, code); err != nil {
-		return err
+		return "", err
 	}
 
 	// TODO: Send OTP to contact (email/SMS) — out of scope for MVP
 	// For testing: log code or return in non-production
-	return nil
+	return code, nil
 }
 
 // VerifyOTP validates OTP, creates/retrieves owner, returns signed JWT.
