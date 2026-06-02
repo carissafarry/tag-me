@@ -20,9 +20,10 @@ func (r *QRCodeRepository) FindByToken(ctx context.Context, qrToken string) (*mo
 
 	err := r.db.QueryRow(
 		ctx,
-		`SELECT id, owner_id, qr_token, object_type, object_id, is_active, plate
-		 FROM qr_codes
-		 WHERE qr_token = $1`,
+		`SELECT qc.id, qc.owner_id, qc.qr_token, o.object_type, qc.object_id, qc.is_active, o.plate
+		 FROM qr_codes qc
+		 LEFT JOIN objects o ON qc.object_id = o.id
+		 WHERE LOWER(qc.qr_token) = LOWER($1)`,
 		qrToken,
 	).Scan(
 		&qr.ID,
