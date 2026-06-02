@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/carissafarry/tag-me/api/internal/config"
 	"github.com/carissafarry/tag-me/api/internal/models"
 	"github.com/carissafarry/tag-me/api/internal/services"
 )
@@ -30,7 +31,8 @@ func (h *AuthHandler) RequestOTP(c *gin.Context) {
 		return
 	}
 
-	if err := h.authService.RequestOTP(c.Request.Context(), &req); err != nil { // TODO
+	otpCode, err := h.authService.RequestOTP(c.Request.Context(), &req)
+	if err != nil {
 		switch err {
 		case services.ErrContactRequired, services.ErrContactTypeRequired, services.ErrInvalidContact:
 			c.JSON(http.StatusBadRequest, models.ErrorResponse{
@@ -47,7 +49,13 @@ func (h *AuthHandler) RequestOTP(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "otp sent successfully"})
+	response := gin.H{"message": "otp sent successfully"}
+	// In dev, include OTP code for testing
+	cfg := config.Get()
+	if cfg.Environment == "development" {
+		response["otp_code"] = otpCode
+	}
+	c.JSON(http.StatusOK, response)
 }
 
 // VerifyOTP handles POST /auth/verify-otp
