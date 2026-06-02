@@ -16,6 +16,7 @@ import (
 
 func main() {
 	appConfig := config.Load()
+	config.Init(appConfig)  // Store globally for access from anywhere
 
 	// Connect to database
 	db, err := pgxpool.New(context.Background(), appConfig.Database.URL)
