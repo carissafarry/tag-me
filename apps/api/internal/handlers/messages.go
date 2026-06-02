@@ -79,12 +79,12 @@ func (h *MessageHandler) CreateMessage(c *gin.Context) {
 		case errors.As(err, &rateLimitErr):
 			// DAILY_LIMIT
 			if rateLimitErr.Reason == "DAILY_LIMIT" {
-                c.JSON(http.StatusTooManyRequests, models.ErrorResponse{
-                    Error: "you have reached the daily message limit for this QR",
-                    Code:  "daily_limit_exceeded",
-                })
-                return
-            }
+				c.JSON(http.StatusTooManyRequests, models.ErrorResponse{
+					Error: "you have reached the daily message limit for this QR",
+					Code:  "daily_limit_exceeded",
+				})
+				return
+			}
 
 			// COOLDOWN
 			if rateLimitErr.RetryAfter > 0 {
@@ -217,8 +217,8 @@ func (h *MessageHandler) GetScan(c *gin.Context) {
 	qrCode, err := h.service.ResolveQRToken(c.Request.Context(), qrToken)
 	if err != nil {
 		c.JSON(http.StatusNotFound, models.ErrorResponse{
-			Error: "qr code not found",
-			Code:  "not_found",
+			Error: err.Error(),
+			Code:  "QR_NOT_FOUND",
 		})
 		return
 	}

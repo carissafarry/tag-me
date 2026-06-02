@@ -88,8 +88,9 @@ export default function TagMePage() {
           router.push(`/conversations/${data.conversation_id}`);
         }
       })
-      .catch(() => {
+      .catch((err) => {
         if (!cancelled) {
+          console.error("[SCAN] getScanInfo error:", err);
           setError("QR code not found or inactive. Please scan again.");
           window.setTimeout(() => setError(null), 5000);
         }
