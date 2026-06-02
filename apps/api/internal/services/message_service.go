@@ -48,6 +48,7 @@ type QRCodeRepository interface {
 
 type ConversationRepository interface {
 	Create(ctx context.Context, conversation *models.Conversation) (*models.Conversation, error)
+	FindAll(ctx context.Context, ownerID string) ([]*models.Conversation, error)
 	FindByID(ctx context.Context, conversationID string) (*models.Conversation, error)
 	FindActiveBySessionAndQR(ctx context.Context, sessionID string, qrCodeID string) (*models.Conversation, error)
 }
@@ -240,6 +241,10 @@ func (s *MessageService) EnqueueNewMessageNotification(ctx context.Context, conv
 	}
 
 	return s.enqueue.EnqueueNotification(ctx, "new_message", conversationID, ownerContact)
+}
+
+func (s *MessageService) GetConversations(ctx context.Context, ownerID string) ([]*models.Conversation, error) {
+	return s.conversations.FindAll(ctx, ownerID)
 }
 
 // GetConversationStatus retrieves the current status of a conversation

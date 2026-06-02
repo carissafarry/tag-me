@@ -164,6 +164,32 @@ func (h *MessageHandler) CreateMessage(c *gin.Context) {
 	c.JSON(http.StatusCreated, response)
 }
 
+func (h *MessageHandler) GetConversations(c *gin.Context) {
+	ownerID := contextString(c, middleware.UserIDKey)
+	if ownerID == "" {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse{
+			Code:  "validation_error",
+			Error: "invalid owner id",
+		})
+		return
+	}
+
+	conversations, err := h.service.GetConversations(c.Request.Context(), ownerID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
+			Code:   "database_error",
+			Error:  "failed to retrieve conversations",
+			Detail: err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"conversations": conversations,
+		"total": len(conversations),
+	})
+}
+
 // GetConversationStatus handles GET /conversations/:id/status
 // Returns only scanner-safe fields: conversation_id, status, created_at
 // Handles not found safely
@@ -194,7 +220,7 @@ func (h *MessageHandler) GetConversationStatus(c *gin.Context) {
 	response := models.ConversationStatusResponse{
 		ConversationID: conversation.ID.String(),
 		Status:         conversation.Status,
-		CreatedAt:      formatJakartaRFC3339(conversation.CreatedAt),
+		CreatedAt:      formatTimePtr(&conversation.CreatedAt),
 		CanFollowUp:    canFollowUp,
 	}
 

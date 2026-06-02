@@ -40,7 +40,7 @@ func (h *ReminderHandler) CreateReminder(c *gin.Context) {
 	if result.Success {
 		response.Message = result.Message
 		if result.NextAllowedAt != nil {
-			response.NextAllowedAt = stringPtr(formatJakartaRFC3339(*result.NextAllowedAt))
+			response.NextAllowedAt = stringPtr(formatTimePtr(result.NextAllowedAt))
 		}
 		c.JSON(http.StatusOK, response)
 		return
@@ -48,7 +48,7 @@ func (h *ReminderHandler) CreateReminder(c *gin.Context) {
 
 	response.Reason = string(result.Reason)
 	if result.NextAllowedAt != nil {
-		response.NextAllowedAt = stringPtr(formatJakartaRFC3339(*result.NextAllowedAt))
+		response.NextAllowedAt = stringPtr(formatTimePtr(result.NextAllowedAt))
 	}
 
 	if result.Reason == models.ReminderReasonInvalidConversation {

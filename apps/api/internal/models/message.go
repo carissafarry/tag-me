@@ -1,6 +1,7 @@
 package models
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/google/uuid"
@@ -8,16 +9,38 @@ import (
 
 // Conversation represents a group of messages around a QR code scan
 type Conversation struct {
-	ID         uuid.UUID `json:"id"`
-	QRCodeID   uuid.UUID `json:"qr_code_id"`
-	OwnerID    uuid.UUID `json:"-"` // Never expose to scanner
-	Status     string    `json:"status"`
-	ExpiresAt  string    `json:"expires_at,omitempty"`
-	OpenedAt   string    `json:"opened_at,omitempty"`
-	OnTheWayAt string    `json:"on_the_way_at,omitempty"`
-	ResolvedAt string    `json:"resolved_at,omitempty"`
-	CreatedAt  time.Time `json:"created_at"`
-	UpdatedAt  time.Time `json:"updated_at"`
+	ID         uuid.UUID  `json:"id"`
+	QRCodeID   uuid.UUID  `json:"qr_code_id"`
+	OwnerID    uuid.UUID  `json:"-"` // Never expose to scanner
+	Status     string     `json:"status"`
+	ExpiresAt  *time.Time `json:"-"`
+	OpenedAt   *time.Time `json:"-"`
+	OnTheWayAt *time.Time `json:"-"`
+	ResolvedAt *time.Time `json:"-"`
+	CreatedAt  time.Time  `json:"-"`
+	UpdatedAt  time.Time  `json:"-"`
+}
+
+// MarshalJSON formats timestamps as "2006-01-02 15:04:05"
+func (c *Conversation) MarshalJSON() ([]byte, error) {
+	type Alias Conversation
+	return json.Marshal(&struct {
+		*Alias
+		ExpiresAt  string `json:"expires_at,omitempty"`
+		OpenedAt   string `json:"opened_at,omitempty"`
+		OnTheWayAt string `json:"on_the_way_at,omitempty"`
+		ResolvedAt string `json:"resolved_at,omitempty"`
+		CreatedAt  string `json:"created_at"`
+		UpdatedAt  string `json:"updated_at"`
+	}{
+		Alias:      (*Alias)(c),
+		ExpiresAt:  formatTimePtr(c.ExpiresAt),
+		OpenedAt:   formatTimePtr(c.OpenedAt),
+		OnTheWayAt: formatTimePtr(c.OnTheWayAt),
+		ResolvedAt: formatTimePtr(c.ResolvedAt),
+		CreatedAt:  c.CreatedAt.Format("2006-01-02 15:04:05"),
+		UpdatedAt:  c.UpdatedAt.Format("2006-01-02 15:04:05"),
+	})
 }
 
 // Message represents an individual scanner message
@@ -80,4 +103,3 @@ type ScanResponse struct {
 	ConversationID *string `json:"conversation_id,omitempty"`
 	HasActive      bool    `json:"has_active"`
 }
-
