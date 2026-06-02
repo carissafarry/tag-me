@@ -13,50 +13,16 @@ import (
 
 const (
 	UserIDHeader = config.UserIDHeader
-	UserIDKey = "user_id"
+	UserIDKey    = "user_id"
 
-	INVALID_AUTH_TOKEN = "Invalid auth token"
-	INVALID_USER_ID = "Invalid User ID"
-	TOKEN_ERROR = "Error parsing token"
+	INVALID_CREDENTIALS = "Invalid credentials"
+	TOKEN_ERROR         = "Error parsing token"
 )
 
 func AuthRequired() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// Get token from header
-		auth := c.GetHeader("Authorization")
-		if auth == "" {
-				unauthorizedResponse(c, INVALID_AUTH_TOKEN)
-				return
-		}
-
-		// Extract bearer token
-		bearer := strings.Split(auth, " ")
-		if len(bearer) != 2 || bearer[0] != "Bearer" {
-			unauthorizedResponse(c, INVALID_AUTH_TOKEN)
-			return
-		}
-
-		// Parse JWT by "."
-		token := bearer[1]
-		tokenParts := strings.Split(token, ".")
-		if len(tokenParts) != 3 {
-			unauthorizedResponse(c, INVALID_AUTH_TOKEN)
-			return
-		}
-
-		// Decode AuthClaims (encoded in auth_service.go)
-		claims := tokenParts[1]
-		claimsJSON, err := base64.RawURLEncoding.DecodeString(claims)
-		if err != nil {
-			unauthorizedResponse(c, TOKEN_ERROR)
-			return
-		}
-
-		// Extract JSON AuthClaims 
-		var authClaims services.AuthClaims
-		err = json.Unmarshal(claimsJSON, &authClaims)
-		if err != nil {
-			unauthorizedResponse(c, TOKEN_ERROR)
+		authClaims, ok := validateToken(c)
+		if !ok {
 			return
 		}
 
@@ -64,6 +30,47 @@ func AuthRequired() gin.HandlerFunc {
 		c.Header(UserIDHeader, authClaims.OwnerID)
 		c.Next()
 	}
+}
+
+func validateToken(c *gin.Context) (services.AuthClaims, bool) {
+	// Get token from header
+	auth := c.GetHeader("Authorization")
+	if auth == "" {
+		unauthorizedResponse(c, INVALID_CREDENTIALS)
+		return services.AuthClaims{}, false
+	}
+
+	// Extract bearer token
+	bearer := strings.Split(auth, " ")
+	if len(bearer) != 2 || bearer[0] != "Bearer" {
+		unauthorizedResponse(c, INVALID_CREDENTIALS)
+		return services.AuthClaims{}, false
+	}
+
+	// Parse JWT by "."
+	token := bearer[1]
+	tokenParts := strings.Split(token, ".")
+	if len(tokenParts) != 3 {
+		unauthorizedResponse(c, INVALID_CREDENTIALS)
+		return services.AuthClaims{}, false
+	}
+
+	// Decode AuthClaims (encoded in auth_service.go)
+	claims := tokenParts[1]
+	claimsJSON, err := base64.RawURLEncoding.DecodeString(claims)
+	if err != nil {
+		unauthorizedResponse(c, TOKEN_ERROR)
+		return services.AuthClaims{}, false
+	}
+
+	// Extract JSON AuthClaims
+	var authClaims services.AuthClaims
+	err = json.Unmarshal(claimsJSON, &authClaims)
+	if err != nil {
+		unauthorizedResponse(c, TOKEN_ERROR)
+		return services.AuthClaims{}, false
+	}
+	return authClaims, true
 }
 
 func unauthorizedResponse(c *gin.Context, message string) {
