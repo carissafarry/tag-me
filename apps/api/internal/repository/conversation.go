@@ -5,6 +5,7 @@ import (
 	"database/sql"
 
 	"github.com/carissafarry/tag-me/api/internal/models"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -43,7 +44,7 @@ func (r *ConversationRepository) Create(ctx context.Context, conversation *model
 	return stored, nil
 }
 
-func (r *ConversationRepository) FindAll(ctx context.Context, ownerID string) ([]*models.Conversation, error) {
+func (r *ConversationRepository) FindAll(ctx context.Context, ownerID uuid.UUID) ([]*models.Conversation, error) {
 	var conversations []*models.Conversation
 
 	rows, err := r.db.Query(

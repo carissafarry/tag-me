@@ -152,24 +152,26 @@ func (h *MessageHandler) CreateMessage(c *gin.Context) {
 
 		_ = h.service.EnqueueNewMessageNotification(enqueueCtx, conversationID, ownerID)
 	}(conversationID, ownerID)
+
 	// Return response with conversation ID for status tracking
 	// Exclude owner contact and session metadata
 	response := models.CreateMessageResponse{
 		ConversationID: conversation.ID.String(),
 		MessageID:      message.ID.String(),
 		Status:         conversation.Status,
-		CreatedAt:      formatJakartaRFC3339(message.CreatedAt),
+		CreatedAt:      formatJakartaTime(message.CreatedAt),
 	}
 
 	c.JSON(http.StatusCreated, response)
 }
 
 func (h *MessageHandler) GetConversations(c *gin.Context) {
-	ownerID := contextString(c, middleware.UserIDKey)
-	if ownerID == "" {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse{
-			Code:  "validation_error",
-			Error: "invalid owner id",
+	ownerID, err := getUserIDUUID(c)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, models.ErrorResponse{
+			Code:  "unauthorized",
+			Error: "unauthorized",
+			Detail: err.Error(),
 		})
 		return
 	}
