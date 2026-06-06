@@ -73,15 +73,37 @@ func setupTestDB(t *testing.T) *pgxpool.Pool {
 	DROP TABLE IF EXISTS messages CASCADE;
 	DROP TABLE IF EXISTS conversations CASCADE;
 	DROP TABLE IF EXISTS qr_codes CASCADE;
+	DROP TABLE IF EXISTS objects CASCADE;
+	DROP TABLE IF EXISTS owners CASCADE;
+
+	CREATE TABLE owners (
+		id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		contact VARCHAR(255) NOT NULL UNIQUE,
+		contact_type VARCHAR(20) NOT NULL DEFAULT 'phone',
+		is_active BOOLEAN NOT NULL DEFAULT true,
+		dnd_enabled BOOLEAN NOT NULL DEFAULT false,
+		created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT date_trunc('second', NOW() AT TIME ZONE 'Asia/Jakarta'),
+		updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT date_trunc('second', NOW() AT TIME ZONE 'Asia/Jakarta')
+	);
+
+	CREATE TABLE objects (
+		id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		owner_id UUID NOT NULL REFERENCES owners(id) ON DELETE CASCADE,
+		name VARCHAR(255) NOT NULL,
+		object_type VARCHAR(100) NOT NULL,
+		plate VARCHAR(10),
+		created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT date_trunc('second', NOW() AT TIME ZONE 'Asia/Jakarta'),
+		updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT date_trunc('second', NOW() AT TIME ZONE 'Asia/Jakarta')
+	);
 
 	CREATE TABLE qr_codes (
 		id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 		owner_id UUID NOT NULL,
 		qr_token VARCHAR(255) NOT NULL UNIQUE,
 		object_type VARCHAR(100) NOT NULL,
-		object_id UUID NOT NULL,
+		object_id UUID,
 		is_active BOOLEAN NOT NULL DEFAULT true,
-		plate VARCHAR(255),
+		path_file VARCHAR(255),
 		created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT date_trunc('second', NOW() AT TIME ZONE 'Asia/Jakarta'),
 		updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT date_trunc('second', NOW() AT TIME ZONE 'Asia/Jakarta')
 	);
@@ -91,6 +113,10 @@ func setupTestDB(t *testing.T) *pgxpool.Pool {
 		qr_code_id UUID NOT NULL,
 		owner_id UUID NOT NULL,
 		status VARCHAR(50) NOT NULL DEFAULT 'PENDING',
+		expires_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT date_trunc('second', NOW() AT TIME ZONE 'Asia/Jakarta') + interval '24 hours',
+		opened_at TIMESTAMP WITHOUT TIME ZONE,
+		on_the_way_at TIMESTAMP WITHOUT TIME ZONE,
+		resolved_at TIMESTAMP WITHOUT TIME ZONE,
 		created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT date_trunc('second', NOW() AT TIME ZONE 'Asia/Jakarta'),
 		updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT date_trunc('second', NOW() AT TIME ZONE 'Asia/Jakarta')
 	);
@@ -123,7 +149,7 @@ func TestPayloadValidation(t *testing.T) {
 	db := setupTestDB(t)
 	defer db.Close()
 
-	service := services.NewMessageService(db)
+	service := services.NewMessageServiceTest(db)
 	handler := handlers.NewMessageHandler(service)
 
 	router := gin.New()
@@ -203,7 +229,7 @@ func TestQRTokenResolution(t *testing.T) {
 	db := setupTestDB(t)
 	defer db.Close()
 
-	service := services.NewMessageService(db)
+	service := services.NewMessageServiceTest(db)
 
 	tests := []struct {
 		name       string
@@ -244,7 +270,7 @@ func TestInvalidQRTokenHTTPResponse(t *testing.T) {
 	db := setupTestDB(t)
 	defer db.Close()
 
-	service := services.NewMessageService(db)
+	service := services.NewMessageServiceTest(db)
 	handler := handlers.NewMessageHandler(service)
 
 	router := gin.New()
@@ -325,7 +351,7 @@ func TestConversationAndMessageCreation(t *testing.T) {
 		t.Fatalf("Failed to insert test QR code: %v", err)
 	}
 
-	service := services.NewMessageService(db)
+	service := services.NewMessageServiceTest(db)
 
 	// Resolve QR token
 	qrCode, err := service.ResolveQRToken(context.Background(), qrToken)
@@ -939,7 +965,7 @@ func TestMessageCreationInvalidQRToken(t *testing.T) {
 	db := setupTestDB(t)
 	defer db.Close()
 
-	service := services.NewMessageService(db)
+	service := services.NewMessageServiceTest(db)
 	handler := handlers.NewMessageHandler(service)
 
 	router := gin.New()
@@ -997,7 +1023,7 @@ func TestGetConversationStatusService(t *testing.T) {
 		t.Fatalf("failed to insert conversation: %v", err)
 	}
 
-	service := services.NewMessageService(db)
+	service := services.NewMessageServiceTest(db)
 	conv, err := service.GetConversationStatus(context.Background(), conversationID.String())
 	if err != nil {
 		t.Fatalf("GetConversationStatus failed: %v", err)
@@ -1038,7 +1064,7 @@ func TestFindActiveConversationBySessionAndQR(t *testing.T) {
 		t.Fatalf("failed to insert conversation: %v", err)
 	}
 
-	service := services.NewMessageService(db)
+	service := services.NewMessageServiceTest(db)
 	conv, err := service.FindActiveConversationBySessionAndQR(context.Background(), sessionID, qrCodeID.String())
 
 	// Expect error since we haven't linked the session to the conversation
@@ -1069,7 +1095,7 @@ func TestResolveQRTokenService(t *testing.T) {
 		t.Fatalf("failed to insert qr code: %v", err)
 	}
 
-	service := services.NewMessageService(db)
+	service := services.NewMessageServiceTest(db)
 	qr, err := service.ResolveQRToken(context.Background(), qrToken)
 	if err != nil {
 		t.Fatalf("ResolveQRToken failed: %v", err)
@@ -1101,7 +1127,7 @@ func TestResolveQRTokenInactive(t *testing.T) {
 		t.Fatalf("failed to insert qr code: %v", err)
 	}
 
-	service := services.NewMessageService(db)
+	service := services.NewMessageServiceTest(db)
 	_, err = service.ResolveQRToken(context.Background(), qrToken)
 	if err == nil {
 		t.Fatal("expected error for inactive QR code")
@@ -1128,7 +1154,7 @@ func TestCreateMessageAllOptionalFields(t *testing.T) {
 		t.Fatalf("failed to insert conversation: %v", err)
 	}
 
-	service := services.NewMessageService(db)
+	service := services.NewMessageServiceTest(db)
 
 	// Create message with all fields including optional ones
 	content := "detailed message"
@@ -1186,7 +1212,7 @@ func TestResponseSerialization(t *testing.T) {
 		t.Fatalf("Failed to insert test QR code: %v", err)
 	}
 
-	service := services.NewMessageService(db)
+	service := services.NewMessageServiceTest(db)
 	handler := handlers.NewMessageHandler(service)
 
 	router := gin.New()
@@ -1286,7 +1312,7 @@ func TestSessionMetadataCapture(t *testing.T) {
 		t.Fatalf("Failed to insert test QR code: %v", err)
 	}
 
-	service := services.NewMessageService(db)
+	service := services.NewMessageServiceTest(db)
 	handler := handlers.NewMessageHandler(service)
 
 	router := gin.New()
@@ -1362,7 +1388,7 @@ func TestInactiveQRToken(t *testing.T) {
 		t.Fatalf("Failed to insert test QR code: %v", err)
 	}
 
-	service := services.NewMessageService(db)
+	service := services.NewMessageServiceTest(db)
 
 	_, err = service.ResolveQRToken(context.Background(), qrToken)
 	if err != services.ErrInactiveFQRToken {
@@ -1387,7 +1413,7 @@ func TestEdgeCaseMissingLocation(t *testing.T) {
 		t.Fatalf("Failed to insert test QR code: %v", err)
 	}
 
-	service := services.NewMessageService(db)
+	service := services.NewMessageServiceTest(db)
 	handler := handlers.NewMessageHandler(service)
 
 	router := gin.New()
@@ -1452,7 +1478,7 @@ func TestHandlerErrorResponseForCreateConversation(t *testing.T) {
 		t.Fatalf("Failed to insert test QR code: %v", err)
 	}
 
-	service := services.NewMessageService(db)
+	service := services.NewMessageServiceTest(db)
 	handler := handlers.NewMessageHandler(service)
 
 	router := gin.New()
@@ -1515,7 +1541,7 @@ func TestHandlerErrorResponseForCreateMessage(t *testing.T) {
 		t.Fatalf("Failed to insert test QR code: %v", err)
 	}
 
-	service := services.NewMessageService(db)
+	service := services.NewMessageServiceTest(db)
 	handler := handlers.NewMessageHandler(service)
 
 	router := gin.New()
@@ -1587,7 +1613,7 @@ func TestGetConversationStatusValid(t *testing.T) {
 		t.Fatalf("Failed to insert test conversation: %v", err)
 	}
 
-	service := services.NewMessageService(db)
+	service := services.NewMessageServiceTest(db)
 	handler := handlers.NewMessageHandler(service)
 
 	router := gin.New()
@@ -1648,7 +1674,7 @@ func TestGetConversationStatusNotFound(t *testing.T) {
 	db := setupTestDB(t)
 	defer db.Close()
 
-	service := services.NewMessageService(db)
+	service := services.NewMessageServiceTest(db)
 	handler := handlers.NewMessageHandler(service)
 
 	router := gin.New()
@@ -1683,7 +1709,7 @@ func TestStatusMappingLogic(t *testing.T) {
 	defer db.Close()
 
 	ownerID := uuid.New()
-	service := services.NewMessageService(db)
+	service := services.NewMessageServiceTest(db)
 
 	// Test all allowed status states from AC2
 	allowedStates := []string{"PENDING", "DELIVERED", "OPENED", "ON_THE_WAY", "RESOLVED"}
@@ -1734,7 +1760,7 @@ func TestInvalidStatusRejection(t *testing.T) {
 	qrCodeID := uuid.New()
 	conversationID := uuid.New()
 	qrToken := "test-token-" + uuid.New().String()
-	service := services.NewMessageService(db)
+	service := services.NewMessageServiceTest(db)
 
 	_, err := db.Exec(context.Background(), `
 		INSERT INTO qr_codes (id, owner_id, qr_token, object_type, object_id, is_active)
@@ -1770,7 +1796,7 @@ func TestStateTransitionReadLogic(t *testing.T) {
 	qrCodeID := uuid.New()
 	conversationID := uuid.New()
 	qrToken := "test-token-" + uuid.New().String()
-	service := services.NewMessageService(db)
+	service := services.NewMessageServiceTest(db)
 	handler := handlers.NewMessageHandler(service)
 
 	// Setup: Create QR code and conversation in PENDING state

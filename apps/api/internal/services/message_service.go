@@ -92,18 +92,6 @@ func (e *ConversationRateLimitError) Is(target error) bool {
 	return target == ErrConversationRateLimited
 }
 
-func NewMessageService(db *pgxpool.Pool) *MessageService {
-	return NewMessageServiceWithDependencies(
-		repository.NewQRCodeRepository(db),
-		repository.NewConversationRepository(db),
-		repository.NewMessageRepository(db),
-		nil,
-		nil,
-		nil,
-		nil,
-	)
-}
-
 func NewMessageServiceWithDependencies(
 	qrCodes QRCodeRepository,
 	conversations ConversationRepository,
@@ -137,6 +125,18 @@ func NewMessageServiceWithDependencies(
 		creationCooldown: finalConfig.ConversationCreationCooldown,
 		maxMessagesPerQR: finalConfig.MaxMessagesPerSessionQR,
 	}
+}
+
+func NewMessageServiceTest(db *pgxpool.Pool) *MessageService {
+	return NewMessageServiceWithDependencies(
+		repository.NewQRCodeRepository(db),
+		repository.NewConversationRepository(db),
+		repository.NewMessageRepository(db),
+		nil,
+		nil,
+		nil,
+		nil,
+	)
 }
 
 // ResolveQRToken validates qr_token and returns owner and object context
@@ -262,6 +262,10 @@ func (s *MessageService) GetDetailConversation(ctx context.Context, conversation
 	}
 
 	return conv, nil
+}
+
+func (s *MessageService) GetConversationStatus(ctx context.Context, conversationID string) (*models.Conversation, error) {
+	return s.GetDetailConversation(ctx, conversationID)
 }
 
 // FindActiveConversationBySessionAndQR finds the latest active conversation for a session+QR pair

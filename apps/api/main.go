@@ -16,7 +16,6 @@ import (
 
 func main() {
 	appConfig := config.Load()
-	config.Init(appConfig)  // Store globally for access from anywhere
 
 	// Connect to database
 	db, err := pgxpool.New(context.Background(), appConfig.Database.URL)
@@ -75,11 +74,12 @@ func main() {
 		},
 	)
 	messageHandler := handlers.NewMessageHandlerWithTracker(messageService, messageStateRepository)
+	conversationRepository := repository.NewConversationRepository(db)
 	cooldownRepository := repository.NewCooldownRepository(redisClient)
 	reminderRepository := repository.NewReminderRepository(redisClient, appConfig.Redis.ReminderStateTTL, cooldownRepository)
 	ipRateLimiter := repository.NewIPRateLimiter(redisClient, appConfig.Redis.IPRateLimitTTL)
-	reminderService := services.NewReminderService(
-		db,
+	reminderService := services.NewReminderServiceWithDependencies(
+		conversationRepository,
 		reminderRepository,
 		messageStateRepository,
 		cooldownRepository,
@@ -108,7 +108,7 @@ func main() {
 	)
 	ownerRepository := repository.NewOwnerRepository(db)
 	authService := services.NewAuthService(ownerRepository, otpRepository, appConfig.Auth.JWT.JWTSecret, appConfig.Auth.JWT.JWTExpiry)
-	authHandler := handlers.NewAuthHandler(authService)
+	authHandler := handlers.NewAuthHandler(authService, appConfig)
 
 	// Routes
 	router.POST("/auth/request-otp", authHandler.RequestOTP)

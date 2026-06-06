@@ -66,29 +66,25 @@ type ReminderService struct {
 
 const reminderEnqueueTimeout = 2 * time.Second
 
-func NewReminderService(
-	db *pgxpool.Pool,
-	reminders ReminderRepository,
-	messages MessageStateRepository,
-	cooldowns CooldownRepository,
-	ipRateLimits IPRateLimiter,
-	enqueue NotificationEnqueuer,
-	config *ReminderConfig,
-	now func() time.Time,
-) *ReminderService {
-	return NewReminderServiceWithConversationRepository(
+func NewReminderService(db *pgxpool.Pool) *ReminderService {
+	return NewReminderServiceWithDependencies(
 		repository.NewConversationRepository(db),
-		reminders,
-		messages,
-		cooldowns,
-		ipRateLimits,
-		enqueue,
-		config,
-		now,
+		nil,
+		nil,
+		nil,
+		nil,
+		&NoOpNotificationEnqueuer{},
+		&ReminderConfig{
+			Cooldown:                2 * time.Minute,
+			MaxReminders:            3,
+			MaxMessagesPerSessionQR: 5,
+			IPWindowLimit:           10,
+		},
+		func() time.Time { return time.Now().UTC() },
 	)
 }
 
-func NewReminderServiceWithConversationRepository(
+func NewReminderServiceWithDependencies(
 	conversations ConversationLookupRepository,
 	reminders ReminderRepository,
 	messages MessageStateRepository,
@@ -98,34 +94,21 @@ func NewReminderServiceWithConversationRepository(
 	config *ReminderConfig,
 	now func() time.Time,
 ) *ReminderService {
-	finalConfig := ReminderConfig{
-		Cooldown:                2 * time.Minute,
-		MaxReminders:            3,
-		MaxMessagesPerSessionQR: 5,
-		IPWindowLimit:           10,
-	}
-
-	if config != nil {
-		if config.Cooldown > 0 {
-			finalConfig.Cooldown = config.Cooldown
-		}
-		if config.MaxReminders > 0 {
-			finalConfig.MaxReminders = config.MaxReminders
-		}
-		if config.MaxMessagesPerSessionQR > 0 {
-			finalConfig.MaxMessagesPerSessionQR = config.MaxMessagesPerSessionQR
-		}
-		if config.IPWindowLimit > 0 {
-			finalConfig.IPWindowLimit = config.IPWindowLimit
-		}
-	}
-
 	if enqueue == nil {
 		enqueue = &NoOpNotificationEnqueuer{}
 	}
 
 	if now == nil {
 		now = func() time.Time { return time.Now().UTC() }
+	}
+	
+	if config == nil {
+		config = &ReminderConfig{
+			Cooldown:                2 * time.Minute,
+			MaxReminders:            3,
+			MaxMessagesPerSessionQR: 5,
+			IPWindowLimit:           10,
+		}
 	}
 
 	return &ReminderService{
@@ -135,7 +118,7 @@ func NewReminderServiceWithConversationRepository(
 		cooldowns:     cooldowns,
 		ipRateLimits:  ipRateLimits,
 		enqueue:       enqueue,
-		config:        finalConfig,
+		config:        *config,
 		now:           now,
 	}
 }
