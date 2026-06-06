@@ -2,7 +2,7 @@
 
 QR-code-based vehicle communication platform. Portfolio-grade product with web and mobile apps.
 
-[Postman API Docs](https://documenter.getpostman.com/view/13444669/2sBXwpMWSf)
+[Postman API Docs](https://carissafarry.dev/docs-tag-me)
 
 ## Overview
 
