@@ -38,8 +38,8 @@ func (c *Conversation) MarshalJSON() ([]byte, error) {
 		OpenedAt:   formatTimePtr(c.OpenedAt),
 		OnTheWayAt: formatTimePtr(c.OnTheWayAt),
 		ResolvedAt: formatTimePtr(c.ResolvedAt),
-		CreatedAt:  c.CreatedAt.Format("2006-01-02 15:04:05"),
-		UpdatedAt:  c.UpdatedAt.Format("2006-01-02 15:04:05"),
+		CreatedAt:  formatTimePtr(&c.CreatedAt),
+		UpdatedAt:  formatTimePtr(&c.UpdatedAt),
 	})
 }
 

@@ -190,6 +190,30 @@ func (h *MessageHandler) GetConversations(c *gin.Context) {
 	})
 }
 
+func (h *MessageHandler) GetDetailConversation(c *gin.Context) {
+	conversationID := c.Param("id")
+	if conversationID == "" {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse{
+			Code: "validation_error",
+			Error: "invalid conversation id", 
+		})
+		return
+	}
+
+	conversation, err := h.service.GetDetailConversation(c.Request.Context(), conversationID)
+	if err != nil {
+		// Return safe not found error - don't leak DB details
+		c.JSON(http.StatusNotFound, models.ErrorResponse{
+			Code:  "not_found",
+			Error: "conversation not found",
+			Detail: err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, conversation)
+}
+
 // GetConversationStatus handles GET /conversations/:id/status
 // Returns only scanner-safe fields: conversation_id, status, created_at
 // Handles not found safely
@@ -203,7 +227,7 @@ func (h *MessageHandler) GetConversationStatus(c *gin.Context) {
 		return
 	}
 
-	conversation, err := h.service.GetConversationStatus(c.Request.Context(), conversationID)
+	conversation, err := h.service.GetDetailConversation(c.Request.Context(), conversationID)
 	if err != nil {
 		// Return safe not found error - don't leak DB details
 		c.JSON(http.StatusNotFound, models.ErrorResponse{

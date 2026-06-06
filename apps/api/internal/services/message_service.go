@@ -247,9 +247,9 @@ func (s *MessageService) GetConversations(ctx context.Context, ownerID string) (
 	return s.conversations.FindAll(ctx, ownerID)
 }
 
-// GetConversationStatus retrieves the current status of a conversation
+// GetDetailConversation retrieves the current status of a conversation
 // Validates that status is in the allowed set (AC5: status values map correctly from owner actions)
-func (s *MessageService) GetConversationStatus(ctx context.Context, conversationID string) (*models.Conversation, error) {
+func (s *MessageService) GetDetailConversation(ctx context.Context, conversationID string) (*models.Conversation, error) {
 	conv, err := s.conversations.FindByID(ctx, conversationID)
 	if err != nil {
 		// QueryRow returns ErrNoRows if not found

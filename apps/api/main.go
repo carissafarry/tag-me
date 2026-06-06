@@ -122,9 +122,11 @@ func main() {
 
 	v1 := api.Group("/v1")
 	v1.Use(middleware.AuthRequired())
-	v1.GET("/conversations", messageHandler.GetConversations)
-	v1.GET("/conversations/:id", messageHandler.GetDetailConversation)
-	
+
+	conversations := v1.Group("/conversations")
+	conversations.GET("/", messageHandler.GetConversations)
+	conversations.GET("/:id", messageHandler.GetDetailConversation)
+
 	// Health check
 	router.GET("/health", func(c *gin.Context) {
 		c.JSON(200, gin.H{"status": "ok"})
