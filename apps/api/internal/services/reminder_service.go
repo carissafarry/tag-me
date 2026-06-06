@@ -66,6 +66,7 @@ type ReminderService struct {
 
 const reminderEnqueueTimeout = 2 * time.Second
 
+// Unused yet
 func NewReminderService(db *pgxpool.Pool) *ReminderService {
 	return NewReminderServiceWithDependencies(
 		repository.NewConversationRepository(db),
@@ -101,7 +102,7 @@ func NewReminderServiceWithDependencies(
 	if now == nil {
 		now = func() time.Time { return time.Now().UTC() }
 	}
-	
+
 	if config == nil {
 		config = &ReminderConfig{
 			Cooldown:                2 * time.Minute,
