@@ -44,8 +44,8 @@ func (h *MessageHandler) CreateMessage(c *gin.Context) {
 	// Validate request payload
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse{
-			Error: services.ErrInvalidRequest.Error(),
 			Code:  "validation_error",
+			Error: services.ErrInvalidRequest.Error(),
 		})
 		return
 	}
@@ -65,8 +65,8 @@ func (h *MessageHandler) CreateMessage(c *gin.Context) {
 	if err != nil {
 		// Return safe error - don't leak whether token exists
 		c.JSON(http.StatusUnauthorized, models.ErrorResponse{
-			Error: "invalid or inactive qr code",
 			Code:  "invalid_qr_token",
+			Error: "invalid or inactive qr code",
 		})
 		return
 	}
@@ -80,8 +80,8 @@ func (h *MessageHandler) CreateMessage(c *gin.Context) {
 			// DAILY_LIMIT
 			if rateLimitErr.Reason == "DAILY_LIMIT" {
 				c.JSON(http.StatusTooManyRequests, models.ErrorResponse{
-					Error: "you have reached the daily message limit for this QR",
 					Code:  "daily_limit_exceeded",
+					Error: "you have reached the daily message limit for this QR",
 				})
 				return
 			}
@@ -91,21 +91,21 @@ func (h *MessageHandler) CreateMessage(c *gin.Context) {
 				c.Header("Retry-After", strconv.FormatInt(int64(rateLimitErr.RetryAfter/time.Second), 10))
 			}
 			c.JSON(http.StatusTooManyRequests, models.ErrorResponse{
-				Error: "you are creating conversations too quickly, please try again later",
 				Code:  "rate_limited",
+				Error: "you are creating conversations too quickly, please try again later",
 			})
 			return
 		case errors.Is(err, services.ErrMessageServiceUnavailable):
 			c.JSON(http.StatusServiceUnavailable, models.ErrorResponse{
-				Error: "message service temporarily unavailable",
 				Code:  "service_unavailable",
+				Error: "message service temporarily unavailable",
 			})
 			return
 		}
 
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
-			Error:  "failed to create conversation",
 			Code:   "database_error",
+			Error:  "failed to create conversation",
 			Detail: err.Error(),
 		})
 		return
@@ -125,8 +125,8 @@ func (h *MessageHandler) CreateMessage(c *gin.Context) {
 	)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
-			Error:  "failed to create message",
 			Code:   "database_error",
+			Error:  "failed to create message",
 			Detail: err.Error(),
 		})
 		return
@@ -135,8 +135,8 @@ func (h *MessageHandler) CreateMessage(c *gin.Context) {
 	if h.messageTracker != nil {
 		if _, err := h.messageTracker.TrackMessage(c.Request.Context(), sessionIDStr, qrCode.ID.String(), time.Now().UTC()); err != nil {
 			c.JSON(http.StatusServiceUnavailable, models.ErrorResponse{
-				Error: "message tracking temporarily unavailable",
 				Code:  "service_unavailable",
+				Error: "message tracking temporarily unavailable",
 			})
 			return
 		}
@@ -164,6 +164,56 @@ func (h *MessageHandler) CreateMessage(c *gin.Context) {
 	c.JSON(http.StatusCreated, response)
 }
 
+func (h *MessageHandler) GetConversations(c *gin.Context) {
+	ownerID := contextString(c, middleware.UserIDKey)
+	if ownerID == "" {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse{
+			Code:  "validation_error",
+			Error: "invalid owner id",
+		})
+		return
+	}
+
+	conversations, err := h.service.GetConversations(c.Request.Context(), ownerID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
+			Code:   "database_error",
+			Error:  "failed to retrieve conversations",
+			Detail: err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"conversations": conversations,
+		"total": len(conversations),
+	})
+}
+
+func (h *MessageHandler) GetDetailConversation(c *gin.Context) {
+	conversationID := c.Param("id")
+	if conversationID == "" {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse{
+			Code: "validation_error",
+			Error: "invalid conversation id", 
+		})
+		return
+	}
+
+	conversation, err := h.service.GetDetailConversation(c.Request.Context(), conversationID)
+	if err != nil {
+		// Return safe not found error - don't leak DB details
+		c.JSON(http.StatusNotFound, models.ErrorResponse{
+			Code:  "not_found",
+			Error: "conversation not found",
+			Detail: err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, conversation)
+}
+
 // GetConversationStatus handles GET /conversations/:id/status
 // Returns only scanner-safe fields: conversation_id, status, created_at
 // Handles not found safely
@@ -177,7 +227,7 @@ func (h *MessageHandler) GetConversationStatus(c *gin.Context) {
 		return
 	}
 
-	conversation, err := h.service.GetConversationStatus(c.Request.Context(), conversationID)
+	conversation, err := h.service.GetDetailConversation(c.Request.Context(), conversationID)
 	if err != nil {
 		// Return safe not found error - don't leak DB details
 		c.JSON(http.StatusNotFound, models.ErrorResponse{
@@ -194,7 +244,7 @@ func (h *MessageHandler) GetConversationStatus(c *gin.Context) {
 	response := models.ConversationStatusResponse{
 		ConversationID: conversation.ID.String(),
 		Status:         conversation.Status,
-		CreatedAt:      formatJakartaRFC3339(conversation.CreatedAt),
+		CreatedAt:      formatTimePtr(&conversation.CreatedAt),
 		CanFollowUp:    canFollowUp,
 	}
 

@@ -113,10 +113,19 @@ func main() {
 	// Routes
 	router.POST("/auth/request-otp", authHandler.RequestOTP)
 	router.POST("/auth/verify-otp", authHandler.VerifyOTP)
-	router.GET("/scan", messageHandler.GetScan)
-	router.POST("/messages", messageHandler.CreateMessage)
-	router.GET("/conversations/:id/status", messageHandler.GetConversationStatus)
-	router.POST("/conversations/:id/reminder", reminderHandler.CreateReminder)
+	
+	api := router.Group("/api")
+	api.GET("/scan", messageHandler.GetScan)
+	api.POST("/messages", messageHandler.CreateMessage)
+	api.GET("/conversations/:id/status", messageHandler.GetConversationStatus)
+	api.POST("/conversations/:id/reminder", reminderHandler.CreateReminder)
+
+	v1 := api.Group("/v1")
+	v1.Use(middleware.AuthRequired())
+
+	conversations := v1.Group("/conversations")
+	conversations.GET("/", messageHandler.GetConversations)
+	conversations.GET("/:id", messageHandler.GetDetailConversation)
 
 	// Health check
 	router.GET("/health", func(c *gin.Context) {

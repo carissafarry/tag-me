@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"database/sql"
 
 	"github.com/carissafarry/tag-me/api/internal/models"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -40,6 +41,68 @@ func (r *ConversationRepository) Create(ctx context.Context, conversation *model
 	}
 
 	return stored, nil
+}
+
+func (r *ConversationRepository) FindAll(ctx context.Context, ownerID string) ([]*models.Conversation, error) {
+	var conversations []*models.Conversation
+
+	rows, err := r.db.Query(
+		ctx,
+		`SELECT *
+		 FROM conversations
+		 WHERE owner_id = $1
+		 AND status NOT IN ('RESOLVED', 'EXPIRED')
+		 AND expires_at > NOW()`,
+		ownerID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		conversation := &models.Conversation{}
+		var createdAt, updatedAt, expiresAt, openedAt, onTheWayAt, resolvedAt sql.NullTime
+		err := rows.Scan(
+			&conversation.ID,
+			&conversation.QRCodeID,
+			&conversation.OwnerID,
+			&conversation.Status,
+			&expiresAt,
+			&openedAt,
+			&onTheWayAt,
+			&resolvedAt,
+			&createdAt,
+			&updatedAt,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		// Assign time.Time values (MarshalJSON handles formatting)
+		if expiresAt.Valid {
+			conversation.ExpiresAt = &expiresAt.Time
+		}
+		if openedAt.Valid {
+			conversation.OpenedAt = &openedAt.Time
+		}
+		if onTheWayAt.Valid {
+			conversation.OnTheWayAt = &onTheWayAt.Time
+		}
+		if resolvedAt.Valid {
+			conversation.ResolvedAt = &resolvedAt.Time
+		}
+		if createdAt.Valid {
+			conversation.CreatedAt = createdAt.Time
+		}
+		if updatedAt.Valid {
+			conversation.UpdatedAt = updatedAt.Time
+		}
+
+		conversations = append(conversations, conversation)
+	}
+
+	return conversations, nil
 }
 
 func (r *ConversationRepository) FindByID(ctx context.Context, conversationID string) (*models.Conversation, error) {

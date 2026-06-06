@@ -32,3 +32,10 @@ func stringPtr(value string) *string {
 func formatJakartaRFC3339(value time.Time) string {
 	return value.In(jakartaLocation).Format(time.RFC3339)
 }
+
+func formatTimePtr(t *time.Time) string {
+	if t == nil {
+		return ""
+	}
+	return t.Format("2006-01-02 15:04:05")
+}
