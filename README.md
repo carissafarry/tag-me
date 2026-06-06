@@ -2,7 +2,7 @@
 
 QR-code-based vehicle communication platform. Portfolio-grade product with web and mobile apps.
 
-[API Docs](https://documenter.getpostman.com/view/13444669/2sBXwpMWSf)
+[Poetman API Docs](https://documenter.getpostman.com/view/13444669/2sBXwpMWSf)
 
 ## Overview
 
