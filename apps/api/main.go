@@ -95,6 +95,11 @@ func main() {
 	)
 	reminderHandler := handlers.NewReminderHandler(reminderService)
 
+	// Initialize object service and handler
+	objectRepository := repository.NewObjectRepository(db)
+	objectService := services.NewObjectService(objectRepository)
+	objectHandler := handlers.NewObjectHandler(objectService)
+
 	// Initialize auth service and handler
 	otpRepository := repository.NewOTPRepository(
 		redisClient,
@@ -126,6 +131,12 @@ func main() {
 	conversations := v1.Group("/conversations")
 	conversations.GET("/", messageHandler.GetConversations)
 	conversations.GET("/:id", messageHandler.GetDetailConversation)
+
+	objects := v1.Group("/objects")
+	objects.POST("/", objectHandler.CreateObject)
+	objects.GET("/", objectHandler.GetObjects)
+	objects.GET("/:id", objectHandler.GetObjectDetail)
+	objects.DELETE("/:id", objectHandler.DeleteObject)
 
 	// Health check
 	router.GET("/health", func(c *gin.Context) {
