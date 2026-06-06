@@ -68,8 +68,8 @@ func setupReminderTestDeps(t *testing.T, now time.Time, config *services.Reminde
 	ipRateLimiter := repository.NewIPRateLimiter(client, 10*time.Minute)
 	notifier := &reminderNotifierSpy{}
 
-	service := services.NewReminderService(
-		db,
+	service := services.NewReminderServiceWithDependencies(
+		repository.NewConversationRepository(db),
 		reminderRepository,
 		messageStateRepository,
 		cooldownRepository,
@@ -85,13 +85,33 @@ func setupReminderTestDeps(t *testing.T, now time.Time, config *services.Reminde
 	router.POST("/conversations/:id/reminder", handler.CreateReminder)
 
 	ownerID := uuid.New()
+	objectID := uuid.New()
 	qrCodeID := uuid.New()
 	conversationID := uuid.New()
 
+	// Create owner
 	_, err := db.Exec(context.Background(), `
-		INSERT INTO qr_codes (id, owner_id, qr_token, object_type, object_id, is_active)
-		VALUES ($1, $2, $3, $4, $5, true)
-	`, qrCodeID, ownerID, "reminder-token-"+uuid.New().String(), "vehicle", uuid.New())
+		INSERT INTO owners (id, contact, contact_type, is_active, created_at, updated_at)
+		VALUES ($1, $2, 'email', true, NOW(), NOW())
+	`, ownerID, "owner@example.com")
+	if err != nil {
+		t.Fatalf("failed to insert owner: %v", err)
+	}
+
+	// Create object
+	_, err = db.Exec(context.Background(), `
+		INSERT INTO objects (id, owner_id, name, object_type, created_at, updated_at)
+		VALUES ($1, $2, 'Test Vehicle', 'car', NOW(), NOW())
+	`, objectID, ownerID)
+	if err != nil {
+		t.Fatalf("failed to insert object: %v", err)
+	}
+
+	// Create QR code
+	_, err = db.Exec(context.Background(), `
+		INSERT INTO qr_codes (id, owner_id, object_id, qr_token, object_type, is_active, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, true, NOW(), NOW())
+	`, qrCodeID, ownerID, objectID, "reminder-token-"+uuid.New().String(), "car")
 	if err != nil {
 		t.Fatalf("failed to insert qr code: %v", err)
 	}

@@ -21,7 +21,7 @@ type Conversation struct {
 	UpdatedAt  time.Time  `json:"-"`
 }
 
-// MarshalJSON formats timestamps as "2006-01-02 15:04:05"
+// MarshalJSON formats timestamps as RFC3339 (Jakarta timezone)
 func (c *Conversation) MarshalJSON() ([]byte, error) {
 	type Alias Conversation
 	return json.Marshal(&struct {
@@ -34,12 +34,12 @@ func (c *Conversation) MarshalJSON() ([]byte, error) {
 		UpdatedAt  string `json:"updated_at"`
 	}{
 		Alias:      (*Alias)(c),
-		ExpiresAt:  formatTimePtr(c.ExpiresAt),
-		OpenedAt:   formatTimePtr(c.OpenedAt),
-		OnTheWayAt: formatTimePtr(c.OnTheWayAt),
-		ResolvedAt: formatTimePtr(c.ResolvedAt),
-		CreatedAt:  formatTimePtr(&c.CreatedAt),
-		UpdatedAt:  formatTimePtr(&c.UpdatedAt),
+		ExpiresAt:  formatJakartaTimePtr(c.ExpiresAt),
+		OpenedAt:   formatJakartaTimePtr(c.OpenedAt),
+		OnTheWayAt: formatJakartaTimePtr(c.OnTheWayAt),
+		ResolvedAt: formatJakartaTimePtr(c.ResolvedAt),
+		CreatedAt:  formatJakartaTime(c.CreatedAt),
+		UpdatedAt:  formatJakartaTime(c.UpdatedAt),
 	})
 }
 

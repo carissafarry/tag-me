@@ -11,11 +11,13 @@ import (
 
 type AuthHandler struct {
 	authService *services.AuthService
+	config      config.App
 }
 
-func NewAuthHandler(authService *services.AuthService) *AuthHandler {
+func NewAuthHandler(authService *services.AuthService, cfg config.App) *AuthHandler {
 	return &AuthHandler{
 		authService: authService,
+		config:      cfg,
 	}
 }
 
@@ -51,8 +53,7 @@ func (h *AuthHandler) RequestOTP(c *gin.Context) {
 
 	response := gin.H{"message": "otp sent successfully"}
 	// In dev, include OTP code for testing
-	cfg := config.Get()
-	if cfg.Environment == "development" {
+	if h.config.Environment == "development" {
 		response["otp_code"] = otpCode
 	}
 	c.JSON(http.StatusOK, response)

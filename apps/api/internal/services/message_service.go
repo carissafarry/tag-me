@@ -48,7 +48,7 @@ type QRCodeRepository interface {
 
 type ConversationRepository interface {
 	Create(ctx context.Context, conversation *models.Conversation) (*models.Conversation, error)
-	FindAll(ctx context.Context, ownerID string) ([]*models.Conversation, error)
+	FindAll(ctx context.Context, ownerID uuid.UUID) ([]*models.Conversation, error)
 	FindByID(ctx context.Context, conversationID string) (*models.Conversation, error)
 	FindActiveBySessionAndQR(ctx context.Context, sessionID string, qrCodeID string) (*models.Conversation, error)
 }
@@ -92,18 +92,6 @@ func (e *ConversationRateLimitError) Is(target error) bool {
 	return target == ErrConversationRateLimited
 }
 
-func NewMessageService(db *pgxpool.Pool) *MessageService {
-	return NewMessageServiceWithDependencies(
-		repository.NewQRCodeRepository(db),
-		repository.NewConversationRepository(db),
-		repository.NewMessageRepository(db),
-		nil,
-		nil,
-		nil,
-		nil,
-	)
-}
-
 func NewMessageServiceWithDependencies(
 	qrCodes QRCodeRepository,
 	conversations ConversationRepository,
@@ -137,6 +125,18 @@ func NewMessageServiceWithDependencies(
 		creationCooldown: finalConfig.ConversationCreationCooldown,
 		maxMessagesPerQR: finalConfig.MaxMessagesPerSessionQR,
 	}
+}
+
+func NewMessageServiceTest(db *pgxpool.Pool) *MessageService {
+	return NewMessageServiceWithDependencies(
+		repository.NewQRCodeRepository(db),
+		repository.NewConversationRepository(db),
+		repository.NewMessageRepository(db),
+		nil,
+		nil,
+		nil,
+		nil,
+	)
 }
 
 // ResolveQRToken validates qr_token and returns owner and object context
@@ -243,7 +243,7 @@ func (s *MessageService) EnqueueNewMessageNotification(ctx context.Context, conv
 	return s.enqueue.EnqueueNotification(ctx, "new_message", conversationID, ownerContact)
 }
 
-func (s *MessageService) GetConversations(ctx context.Context, ownerID string) ([]*models.Conversation, error) {
+func (s *MessageService) GetConversations(ctx context.Context, ownerID uuid.UUID) ([]*models.Conversation, error) {
 	return s.conversations.FindAll(ctx, ownerID)
 }
 
@@ -262,6 +262,10 @@ func (s *MessageService) GetDetailConversation(ctx context.Context, conversation
 	}
 
 	return conv, nil
+}
+
+func (s *MessageService) GetConversationStatus(ctx context.Context, conversationID string) (*models.Conversation, error) {
+	return s.GetDetailConversation(ctx, conversationID)
 }
 
 // FindActiveConversationBySessionAndQR finds the latest active conversation for a session+QR pair

@@ -70,7 +70,7 @@ func TestSendReminderAsyncEnqueue(t *testing.T) {
 		release: make(chan struct{}),
 	}
 
-	service := NewReminderServiceWithConversationRepository(
+	service := NewReminderServiceWithDependencies(
 		&reminderConversationRepoStub{
 			conversation: models.Conversation{
 				ID:       uuid.New(),
