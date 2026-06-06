@@ -2,6 +2,8 @@
 
 QR-code-based vehicle communication platform. Portfolio-grade product with web and mobile apps.
 
+[API Docs](https://documenter.getpostman.com/view/13444669/2sBXwpMWSf)
+
 ## Overview
 
 Tag Me enables vehicle owners to share a QR code on their vehicle. When others scan the code, they can start or resume conversations with the owner, send messages, and request reminders. Built with production-quality standards, comprehensive testing, and small, reviewable PRs.
