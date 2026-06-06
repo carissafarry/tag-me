@@ -18,3 +18,11 @@ func parseOptionalUnix(value interface{}) (int64, error) {
 
 	return strconv.ParseInt(text, 10, 64)
 }
+
+func addRepoFilter(query *string, args *[]any, fieldName string, value string, paramCount *int) {
+	if value != "" {
+		*query += fmt.Sprintf(" AND %s = $%d", fieldName, *paramCount)
+		*args = append(*args, value)
+		(*paramCount)++
+	}
+}
