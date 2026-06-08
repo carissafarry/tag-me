@@ -236,6 +236,20 @@ func (h *ObjectHandler) GetQRImage(c *gin.Context) {
 
 	qrImage, err := h.qrService.GenerateQRCodeImage(c.Request.Context(), token)
 	if err != nil {
+		if errors.Is(err, services.ErrInvalidQRToken) {
+			c.JSON(http.StatusNotFound, models.ErrorResponse{
+				Code:  "qr_token_not_found",
+				Error: "qr token not found",
+			})
+			return
+		}
+		if errors.Is(err, services.ErrInactiveFQRToken) {
+			c.JSON(http.StatusForbidden, models.ErrorResponse{
+				Code:  "qr_token_inactive",
+				Error: "qr token is inactive",
+			})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
 			Code:  "internal_error",
 			Error: "failed to get qr code image",
