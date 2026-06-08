@@ -343,9 +343,9 @@ func TestConversationAndMessageCreation(t *testing.T) {
 	qrToken := "test-valid-token-" + uuid.New().String()
 
 	_, err := db.Exec(context.Background(), `
-		INSERT INTO qr_codes (id, owner_id, qr_token, object_type, object_id, is_active)
-		VALUES ($1, $2, $3, $4, $5, true)
-	`, qrCodeID, ownerID, qrToken, "link", uuid.New())
+		INSERT INTO qr_codes (id, owner_id, qr_token, object_id, is_active)
+		VALUES ($1, $2, $3, $4, $5)
+	`, qrCodeID, ownerID, qrToken, uuid.New(), true)
 	if err != nil {
 		t.Fatalf("Failed to insert test QR code: %v", err)
 	}
@@ -451,9 +451,9 @@ func setupGuardedMessageTestDeps(t *testing.T, cooldown time.Duration) *guardedM
 	qrToken := "guarded-token-" + uuid.New().String()
 
 	_, err := db.Exec(context.Background(), `
-		INSERT INTO qr_codes (id, owner_id, qr_token, object_type, object_id, is_active)
-		VALUES ($1, $2, $3, $4, $5, true)
-	`, qrCodeID, ownerID, qrToken, "link", uuid.New())
+		INSERT INTO qr_codes (id, owner_id, qr_token, object_id, is_active)
+		VALUES ($1, $2, $3, $4, $5)
+	`, qrCodeID, ownerID, qrToken, uuid.New(), true)
 	if err != nil {
 		t.Fatalf("Failed to insert test QR code: %v", err)
 	}
@@ -522,9 +522,9 @@ func insertGuardedQRToken(t *testing.T, db *pgxpool.Pool) string {
 	qrToken := "guarded-token-" + uuid.New().String()
 
 	_, err := db.Exec(context.Background(), `
-		INSERT INTO qr_codes (id, owner_id, qr_token, object_type, object_id, is_active)
-		VALUES ($1, $2, $3, $4, $5, true)
-	`, qrCodeID, ownerID, qrToken, "link", uuid.New())
+		INSERT INTO qr_codes (id, owner_id, qr_token, object_id, is_active)
+		VALUES ($1, $2, $3, $4, $5)
+	`, qrCodeID, ownerID, qrToken, uuid.New(), true)
 	if err != nil {
 		t.Fatalf("Failed to insert test QR code: %v", err)
 	}
@@ -769,9 +769,9 @@ func TestMessageCreationEnqueuesNotification(t *testing.T) {
 	qrToken := "test-enqueue-token-" + uuid.New().String()
 
 	_, err := db.Exec(context.Background(), `
-		INSERT INTO qr_codes (id, owner_id, qr_token, object_type, object_id, is_active)
-		VALUES ($1, $2, $3, $4, $5, true)
-	`, qrCodeID, ownerID, qrToken, "link", uuid.New())
+		INSERT INTO qr_codes (id, owner_id, qr_token, object_id, is_active)
+		VALUES ($1, $2, $3, $4, $5)
+	`, qrCodeID, ownerID, qrToken, uuid.New(), true)
 	if err != nil {
 		t.Fatalf("Failed to insert test QR code: %v", err)
 	}
@@ -837,9 +837,9 @@ func TestMessageCreationWithEnqueueError(t *testing.T) {
 	qrToken := "test-enqueue-error-" + uuid.New().String()
 
 	_, err := db.Exec(context.Background(), `
-		INSERT INTO qr_codes (id, owner_id, qr_token, object_type, object_id, is_active)
-		VALUES ($1, $2, $3, $4, $5, true)
-	`, qrCodeID, ownerID, qrToken, "link", uuid.New())
+		INSERT INTO qr_codes (id, owner_id, qr_token, object_id, is_active)
+		VALUES ($1, $2, $3, $4, $5)
+	`, qrCodeID, ownerID, qrToken, uuid.New(), true)
 	if err != nil {
 		t.Fatalf("Failed to insert test QR code: %v", err)
 	}
@@ -1007,8 +1007,8 @@ func TestGetConversationStatusService(t *testing.T) {
 
 	// Insert conversation
 	_, err := db.Exec(context.Background(), `
-		INSERT INTO qr_codes (id, owner_id, qr_token, object_type, object_id, is_active)
-		VALUES ($1, $2, $3, $4, $5, true)
+		INSERT INTO qr_codes (id, owner_id, qr_token, object_id, is_active)
+		VALUES ($1, $2, $3, $4, true)
 	`, qrCodeID, ownerID, "token-status-test", "link", uuid.New())
 	if err != nil {
 		t.Fatalf("failed to insert qr code: %v", err)
@@ -1048,8 +1048,8 @@ func TestFindActiveConversationBySessionAndQR(t *testing.T) {
 
 	// Insert QR and conversation
 	_, err := db.Exec(context.Background(), `
-		INSERT INTO qr_codes (id, owner_id, qr_token, object_type, object_id, is_active)
-		VALUES ($1, $2, $3, $4, $5, true)
+		INSERT INTO qr_codes (id, owner_id, qr_token, object_id, is_active)
+		VALUES ($1, $2, $3, $4, true)
 	`, qrCodeID, ownerID, "active-token", "link", uuid.New())
 	if err != nil {
 		t.Fatalf("failed to insert qr code: %v", err)
@@ -1087,9 +1087,9 @@ func TestResolveQRTokenService(t *testing.T) {
 
 	// Insert active QR code
 	_, err := db.Exec(context.Background(), `
-		INSERT INTO qr_codes (id, owner_id, qr_token, object_type, object_id, is_active)
-		VALUES ($1, $2, $3, $4, $5, true)
-	`, qrCodeID, ownerID, qrToken, "link", uuid.New())
+		INSERT INTO qr_codes (id, owner_id, qr_token, object_id, is_active)
+		VALUES ($1, $2, $3, $4, $5)
+	`, qrCodeID, ownerID, qrToken, uuid.New(), true)
 	if err != nil {
 		t.Fatalf("failed to insert qr code: %v", err)
 	}
@@ -1119,7 +1119,7 @@ func TestResolveQRTokenInactive(t *testing.T) {
 
 	// Insert inactive QR code
 	_, err := db.Exec(context.Background(), `
-		INSERT INTO qr_codes (id, owner_id, qr_token, object_type, object_id, is_active)
+		INSERT INTO qr_codes (id, owner_id, qr_token, object_id, is_active)
 		VALUES ($1, $2, $3, $4, $5, false)
 	`, qrCodeID, ownerID, qrToken, "link", uuid.New())
 	if err != nil {
@@ -1204,9 +1204,9 @@ func TestResponseSerialization(t *testing.T) {
 	qrToken := "test-token-" + uuid.New().String()
 
 	_, err := db.Exec(context.Background(), `
-		INSERT INTO qr_codes (id, owner_id, qr_token, object_type, object_id, is_active)
-		VALUES ($1, $2, $3, $4, $5, true)
-	`, qrCodeID, ownerID, qrToken, "link", uuid.New())
+		INSERT INTO qr_codes (id, owner_id, qr_token, object_id, is_active)
+		VALUES ($1, $2, $3, $4, $5)
+	`, qrCodeID, ownerID, qrToken, uuid.New(), true)
 	if err != nil {
 		t.Fatalf("Failed to insert test QR code: %v", err)
 	}
@@ -1304,9 +1304,9 @@ func TestSessionMetadataCapture(t *testing.T) {
 	qrToken := "test-token-" + uuid.New().String()
 
 	_, err := db.Exec(context.Background(), `
-		INSERT INTO qr_codes (id, owner_id, qr_token, object_type, object_id, is_active)
-		VALUES ($1, $2, $3, $4, $5, true)
-	`, qrCodeID, ownerID, qrToken, "link", uuid.New())
+		INSERT INTO qr_codes (id, owner_id, qr_token, object_id, is_active)
+		VALUES ($1, $2, $3, $4, $5)
+	`, qrCodeID, ownerID, qrToken, uuid.New(), true)
 	if err != nil {
 		t.Fatalf("Failed to insert test QR code: %v", err)
 	}
@@ -1380,7 +1380,7 @@ func TestInactiveQRToken(t *testing.T) {
 
 	// Create inactive QR code
 	_, err := db.Exec(context.Background(), `
-		INSERT INTO qr_codes (id, owner_id, qr_token, object_type, object_id, is_active)
+		INSERT INTO qr_codes (id, owner_id, qr_token, object_id, is_active)
 		VALUES ($1, $2, $3, $4, $5, false)
 	`, qrCodeID, ownerID, qrToken, "link", uuid.New())
 	if err != nil {
@@ -1405,9 +1405,9 @@ func TestEdgeCaseMissingLocation(t *testing.T) {
 	qrToken := "test-token-" + uuid.New().String()
 
 	_, err := db.Exec(context.Background(), `
-		INSERT INTO qr_codes (id, owner_id, qr_token, object_type, object_id, is_active)
-		VALUES ($1, $2, $3, $4, $5, true)
-	`, qrCodeID, ownerID, qrToken, "link", uuid.New())
+		INSERT INTO qr_codes (id, owner_id, qr_token, object_id, is_active)
+		VALUES ($1, $2, $3, $4, $5)
+	`, qrCodeID, ownerID, qrToken, uuid.New(), true)
 	if err != nil {
 		t.Fatalf("Failed to insert test QR code: %v", err)
 	}
@@ -1470,9 +1470,9 @@ func TestHandlerErrorResponseForCreateConversation(t *testing.T) {
 	qrToken := "test-token-" + uuid.New().String()
 
 	_, err := db.Exec(context.Background(), `
-		INSERT INTO qr_codes (id, owner_id, qr_token, object_type, object_id, is_active)
-		VALUES ($1, $2, $3, $4, $5, true)
-	`, qrCodeID, ownerID, qrToken, "link", uuid.New())
+		INSERT INTO qr_codes (id, owner_id, qr_token, object_id, is_active)
+		VALUES ($1, $2, $3, $4, $5)
+	`, qrCodeID, ownerID, qrToken, uuid.New(), true)
 	if err != nil {
 		t.Fatalf("Failed to insert test QR code: %v", err)
 	}
@@ -1533,9 +1533,9 @@ func TestHandlerErrorResponseForCreateMessage(t *testing.T) {
 	qrToken := "test-token-" + uuid.New().String()
 
 	_, err := db.Exec(context.Background(), `
-		INSERT INTO qr_codes (id, owner_id, qr_token, object_type, object_id, is_active)
-		VALUES ($1, $2, $3, $4, $5, true)
-	`, qrCodeID, ownerID, qrToken, "link", uuid.New())
+		INSERT INTO qr_codes (id, owner_id, qr_token, object_id, is_active)
+		VALUES ($1, $2, $3, $4, $5)
+	`, qrCodeID, ownerID, qrToken, uuid.New(), true)
 	if err != nil {
 		t.Fatalf("Failed to insert test QR code: %v", err)
 	}
@@ -1597,9 +1597,9 @@ func TestGetConversationStatusValid(t *testing.T) {
 	conversationID := uuid.New()
 
 	_, err := db.Exec(context.Background(), `
-		INSERT INTO qr_codes (id, owner_id, qr_token, object_type, object_id, is_active)
-		VALUES ($1, $2, $3, $4, $5, true)
-	`, qrCodeID, ownerID, qrToken, "link", uuid.New())
+		INSERT INTO qr_codes (id, owner_id, qr_token, object_id, is_active)
+		VALUES ($1, $2, $3, $4, $5)
+	`, qrCodeID, ownerID, qrToken, uuid.New(), true)
 	if err != nil {
 		t.Fatalf("Failed to insert test QR code: %v", err)
 	}
@@ -1720,7 +1720,7 @@ func TestStatusMappingLogic(t *testing.T) {
 			qrToken := "test-token-" + uuid.New().String()
 
 			_, err := db.Exec(context.Background(), `
-				INSERT INTO qr_codes (id, owner_id, qr_token, object_type, object_id, is_active)
+				INSERT INTO qr_codes (id, owner_id, qr_token, object_id, is_active)
 				VALUES ($1, $2, $3, $4, $5, true)
 			`, qrCodeID, ownerID, qrToken, "link", uuid.New())
 			if err != nil {
@@ -1762,9 +1762,9 @@ func TestInvalidStatusRejection(t *testing.T) {
 	service := services.NewMessageServiceTest(db)
 
 	_, err := db.Exec(context.Background(), `
-		INSERT INTO qr_codes (id, owner_id, qr_token, object_type, object_id, is_active)
-		VALUES ($1, $2, $3, $4, $5, true)
-	`, qrCodeID, ownerID, qrToken, "link", uuid.New())
+		INSERT INTO qr_codes (id, owner_id, qr_token, object_id, is_active)
+		VALUES ($1, $2, $3, $4, $5)
+	`, qrCodeID, ownerID, qrToken, uuid.New(), true)
 	if err != nil {
 		t.Fatalf("Failed to insert QR code: %v", err)
 	}
@@ -1800,9 +1800,9 @@ func TestStateTransitionReadLogic(t *testing.T) {
 
 	// Setup: Create QR code and conversation in PENDING state
 	_, err := db.Exec(context.Background(), `
-		INSERT INTO qr_codes (id, owner_id, qr_token, object_type, object_id, is_active)
-		VALUES ($1, $2, $3, $4, $5, true)
-	`, qrCodeID, ownerID, qrToken, "link", uuid.New())
+		INSERT INTO qr_codes (id, owner_id, qr_token, object_id, is_active)
+		VALUES ($1, $2, $3, $4, $5)
+	`, qrCodeID, ownerID, qrToken, uuid.New(), true)
 	if err != nil {
 		t.Fatalf("Failed to insert QR code: %v", err)
 	}
