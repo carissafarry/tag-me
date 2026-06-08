@@ -11,11 +11,19 @@ import (
 )
 
 type ObjectHandler struct {
-	service *services.ObjectService
+	service   *services.ObjectService
+	qrService *services.QRCodeService
 }
 
 func NewObjectHandler(service *services.ObjectService) *ObjectHandler {
 	return &ObjectHandler{service: service}
+}
+
+func NewObjectHandlerWithQR(service *services.ObjectService, qrService *services.QRCodeService) *ObjectHandler {
+	return &ObjectHandler{
+		service:   service,
+		qrService: qrService,
+	}
 }
 
 func (h *ObjectHandler) CreateObject(c *gin.Context) {
@@ -161,4 +169,109 @@ func (h *ObjectHandler) DeleteObject(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusNoContent, nil)
+}
+
+// QR CODE handlers
+
+func (h *ObjectHandler) GenerateQRCode(c *gin.Context) {
+	var req models.GenerateQRRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse{
+			Code:  "validation_error",
+			Error: services.ErrInvalidRequest.Error(),
+		})
+		return
+	}
+
+	ownerID, err := getUserIDUUID(c)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, models.ErrorResponse{
+			Code:  "unauthorized",
+			Error: "unauthorized",
+		})
+		return
+	}
+
+	qr, err := h.qrService.GenerateQRCode(c.Request.Context(), ownerID, req.ObjectID)
+	if err != nil {
+		if errors.Is(err, services.ErrObjectNotFound) {
+			c.JSON(http.StatusNotFound, models.ErrorResponse{
+				Code:  "object_not_found",
+				Error: "object not found",
+			})
+			return
+		}
+		if errors.Is(err, services.ErrQRCodeGenerationInProgress) {
+			c.JSON(http.StatusConflict, models.ErrorResponse{
+				Code:  "generation_in_progress",
+				Error: "qr code generation already in progress",
+			})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
+			Code:  "internal_error",
+			Error: "failed to generate qr code",
+			Detail: err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusCreated, models.GenerateQRResponse{
+		ID:        qr.ID,
+		QRToken:   qr.QRToken,
+		IsActive:  qr.IsActive,
+		CreatedAt: formatJakartaTime(qr.CreatedAt),
+	})
+}
+
+func (h *ObjectHandler) GetQRCode(c *gin.Context) {
+	if h.qrService == nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
+			Code:  "internal_error",
+			Error: "qr code service not initialized",
+		})
+		return
+	}
+
+	ownerID, err := getUserIDUUID(c)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, models.ErrorResponse{
+			Code:  "unauthorized",
+			Error: "unauthorized",
+		})
+		return
+	}
+
+	objectID, err := uuid.Parse(c.Param("object_id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse{
+			Code:  "invalid_object_id",
+			Error: "invalid object id",
+		})
+		return
+	}
+
+	qr, err := h.qrService.GetQRCode(c.Request.Context(), ownerID, objectID)
+	if err != nil {
+		if errors.Is(err, services.ErrObjectNotFound) {
+			c.JSON(http.StatusNotFound, models.ErrorResponse{
+				Code:  "object_not_found",
+				Error: "object not found",
+			})
+			return
+		}
+		c.JSON(http.StatusNotFound, models.ErrorResponse{
+			Code:  "qr_code_not_found",
+			Error: "qr code not found",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, models.GetQRResponse{
+		ID:        qr.ID,
+		QRToken:   qr.QRToken,
+		ObjectID:  qr.ObjectID,
+		IsActive:  qr.IsActive,
+		CreatedAt: formatJakartaTime(qr.CreatedAt),
+	})
 }

@@ -98,14 +98,13 @@ func setupTestDB(t *testing.T) *pgxpool.Pool {
 
 	CREATE TABLE qr_codes (
 		id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-		owner_id UUID NOT NULL,
+		owner_id UUID NOT NULL REFERENCES owners(id) ON DELETE CASCADE,
+		object_id UUID NOT NULL REFERENCES objects(id) ON DELETE CASCADE,
 		qr_token VARCHAR(255) NOT NULL UNIQUE,
-		object_type VARCHAR(100) NOT NULL,
-		object_id UUID,
 		is_active BOOLEAN NOT NULL DEFAULT true,
-		path_file VARCHAR(255),
 		created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT date_trunc('second', NOW() AT TIME ZONE 'Asia/Jakarta'),
-		updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT date_trunc('second', NOW() AT TIME ZONE 'Asia/Jakarta')
+		updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT date_trunc('second', NOW() AT TIME ZONE 'Asia/Jakarta'),
+		CONSTRAINT uq_qr_object UNIQUE (object_id)
 	);
 
 	CREATE TABLE conversations (

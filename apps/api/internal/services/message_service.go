@@ -43,7 +43,9 @@ type MessageService struct {
 }
 
 type QRCodeRepository interface {
+	Create(ctx context.Context, ownerID uuid.UUID, objectID uuid.UUID, qrToken string) (*models.QRCode, error)
 	FindByToken(ctx context.Context, qrToken string) (*models.QRCode, error)
+	FindByObjectID(ctx context.Context, ownerID uuid.UUID, objectID uuid.UUID) (*models.QRCode, error)
 }
 
 type ConversationRepository interface {
