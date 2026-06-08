@@ -109,9 +109,9 @@ func setupReminderTestDeps(t *testing.T, now time.Time, config *services.Reminde
 
 	// Create QR code
 	_, err = db.Exec(context.Background(), `
-		INSERT INTO qr_codes (id, owner_id, object_id, qr_token, object_type, is_active, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, true, NOW(), NOW())
-	`, qrCodeID, ownerID, objectID, "reminder-token-"+uuid.New().String(), "car")
+		INSERT INTO qr_codes (id, owner_id, object_id, qr_token, is_active)
+		VALUES ($1, $2, $3, $4, $5)
+	`, qrCodeID, ownerID, objectID, "reminder-token-"+uuid.New().String(), true)
 	if err != nil {
 		t.Fatalf("failed to insert qr code: %v", err)
 	}

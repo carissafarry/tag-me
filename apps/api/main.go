@@ -98,7 +98,9 @@ func main() {
 	// Initialize object service and handler
 	objectRepository := repository.NewObjectRepository(db)
 	objectService := services.NewObjectService(objectRepository)
-	objectHandler := handlers.NewObjectHandler(objectService)
+	qrCodeRepository := repository.NewQRCodeRepository(db)
+	qrCodeService := services.NewQRCodeService(qrCodeRepository, objectRepository, redisClient)
+	objectHandler := handlers.NewObjectHandlerWithQR(objectService, qrCodeService)
 
 	// Initialize auth service and handler
 	otpRepository := repository.NewOTPRepository(
@@ -137,6 +139,10 @@ func main() {
 	objects.GET("/", objectHandler.GetObjects)
 	objects.GET("/:id", objectHandler.GetObjectDetail)
 	objects.DELETE("/:id", objectHandler.DeleteObject)
+
+	qrcode := v1.Group("/qrcode")
+	qrcode.POST("/generate", objectHandler.GenerateQRCode)
+	qrcode.GET("/:object_id", objectHandler.GetQRCode)
 
 	// Health check
 	router.GET("/health", func(c *gin.Context) {

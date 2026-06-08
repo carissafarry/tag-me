@@ -5,11 +5,13 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/alicebob/miniredis/v2"
 	"github.com/carissafarry/tag-me/api/internal/models"
 	"github.com/carissafarry/tag-me/api/internal/repository"
 	"github.com/carissafarry/tag-me/api/internal/services"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
 )
 
 func TestCreateObject(t *testing.T) {
@@ -157,9 +159,9 @@ func TestDeleteObjectBlockedByActiveConversation(t *testing.T) {
 
 	// Create QR code for this object
 	qrID := uuid.New()
-	qrQuery := `INSERT INTO qr_codes (id, owner_id, object_id, qr_token, object_type, is_active, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, true, NOW(), NOW())`
-	_, err = db.Exec(ctx, qrQuery, qrID, owner, obj.ID, "token-"+qrID.String(), "car")
+	qrQuery := `INSERT INTO qr_codes (id, owner_id, object_id, qr_token, is_active)
+		VALUES ($1, $2, $3, $4, $5)`
+	_, err = db.Exec(ctx, qrQuery, qrID, owner, obj.ID, "token-"+qrID.String(), true)
 	if err != nil {
 		t.Fatalf("failed to insert qr_code: %v", err)
 	}
@@ -251,4 +253,209 @@ func setupOwner(t *testing.T, db *pgxpool.Pool, ownerID uuid.UUID, contact strin
 
 func strPtr(s string) *string {
 	return &s
+}
+
+func setupTestRedis() redis.Cmdable {
+	mr := miniredis.RunT(&testing.T{})
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	return client
+}
+
+func TestGenerateQRCode(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+
+	owner := uuid.New()
+	setupOwner(t, db, owner, "owner@example.com")
+
+	// Create an object
+	objRepo := repository.NewObjectRepository(db)
+	objService := services.NewObjectService(objRepo)
+	obj, err := objService.CreateObject(ctx, owner, &models.CreateObjectRequest{
+		Name:       "My Car",
+		ObjectType: "car",
+	})
+	if err != nil {
+		t.Fatalf("failed to create object: %v", err)
+	}
+
+	// Setup Redis for the QR service (using mock or real Redis)
+	redisCmd := setupTestRedis()
+	qrService := services.NewQRCodeService(
+		repository.NewQRCodeRepository(db),
+		objRepo,
+		redisCmd,
+	)
+
+	// Generate QR code
+	qr, err := qrService.GenerateQRCode(ctx, owner, obj.ID)
+	if err != nil {
+		t.Fatalf("GenerateQRCode failed: %v", err)
+	}
+
+	if qr == nil {
+		t.Errorf("expected QR code, got nil")
+	}
+	if qr.ObjectID != obj.ID {
+		t.Errorf("expected object_id %s, got %s", obj.ID, qr.ObjectID)
+	}
+	if qr.OwnerID != owner {
+		t.Errorf("expected owner_id %s, got %s", owner, qr.OwnerID)
+	}
+	if qr.QRToken == "" {
+		t.Errorf("expected non-empty QR token")
+	}
+	if !qr.IsActive {
+		t.Errorf("expected QR code to be active")
+	}
+}
+
+func TestGenerateQRCodeObjectNotFound(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+
+	owner := uuid.New()
+	setupOwner(t, db, owner, "owner@example.com")
+
+	objRepo := repository.NewObjectRepository(db)
+	redisCmd := setupTestRedis()
+	qrService := services.NewQRCodeService(
+		repository.NewQRCodeRepository(db),
+		objRepo,
+		redisCmd,
+	)
+
+	// Try to generate QR for non-existent object
+	nonExistentObjectID := uuid.New()
+	_, err := qrService.GenerateQRCode(ctx, owner, nonExistentObjectID)
+	if err == nil {
+		t.Errorf("expected error for non-existent object")
+	}
+	if !errors.Is(err, services.ErrObjectNotFound) {
+		t.Errorf("expected ErrObjectNotFound, got %v", err)
+	}
+}
+
+func TestGenerateQRCodeReturnsExistingWhenAlreadyGenerated(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+
+	owner := uuid.New()
+	setupOwner(t, db, owner, "owner@example.com")
+
+	objRepo := repository.NewObjectRepository(db)
+	objService := services.NewObjectService(objRepo)
+	obj, err := objService.CreateObject(ctx, owner, &models.CreateObjectRequest{
+		Name:       "My Car",
+		ObjectType: "car",
+	})
+	if err != nil {
+		t.Fatalf("failed to create object: %v", err)
+	}
+
+	redisCmd := setupTestRedis()
+	qrService := services.NewQRCodeService(
+		repository.NewQRCodeRepository(db),
+		objRepo,
+		redisCmd,
+	)
+
+	// Generate first QR code
+	qr1, err := qrService.GenerateQRCode(ctx, owner, obj.ID)
+	if err != nil {
+		t.Fatalf("first GenerateQRCode failed: %v", err)
+	}
+
+	// Generate again - should return existing
+	qr2, err := qrService.GenerateQRCode(ctx, owner, obj.ID)
+	if err != nil {
+		t.Fatalf("second GenerateQRCode failed: %v", err)
+	}
+
+	if qr1.ID != qr2.ID {
+		t.Errorf("expected same QR code ID, got %s vs %s", qr1.ID, qr2.ID)
+	}
+	if qr1.QRToken != qr2.QRToken {
+		t.Errorf("expected same QR token, got %s vs %s", qr1.QRToken, qr2.QRToken)
+	}
+}
+
+func TestGetQRCode(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+
+	owner := uuid.New()
+	setupOwner(t, db, owner, "owner@example.com")
+
+	objRepo := repository.NewObjectRepository(db)
+	objService := services.NewObjectService(objRepo)
+	obj, err := objService.CreateObject(ctx, owner, &models.CreateObjectRequest{
+		Name:       "My Car",
+		ObjectType: "car",
+	})
+	if err != nil {
+		t.Fatalf("failed to create object: %v", err)
+	}
+
+	redisCmd := setupTestRedis()
+	qrService := services.NewQRCodeService(
+		repository.NewQRCodeRepository(db),
+		objRepo,
+		redisCmd,
+	)
+
+	// Generate QR code
+	qr1, err := qrService.GenerateQRCode(ctx, owner, obj.ID)
+	if err != nil {
+		t.Fatalf("GenerateQRCode failed: %v", err)
+	}
+
+	// Get QR code
+	qr2, err := qrService.GetQRCode(ctx, owner, obj.ID)
+	if err != nil {
+		t.Fatalf("GetQRCode failed: %v", err)
+	}
+
+	if qr1.ID != qr2.ID {
+		t.Errorf("expected same QR code ID, got %s vs %s", qr1.ID, qr2.ID)
+	}
+	if qr1.QRToken != qr2.QRToken {
+		t.Errorf("expected same QR token, got %s vs %s", qr1.QRToken, qr2.QRToken)
+	}
+}
+
+func TestGetQRCodeNotFound(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+
+	owner := uuid.New()
+	setupOwner(t, db, owner, "owner@example.com")
+
+	objRepo := repository.NewObjectRepository(db)
+	objService := services.NewObjectService(objRepo)
+	obj, err := objService.CreateObject(ctx, owner, &models.CreateObjectRequest{
+		Name:       "My Car",
+		ObjectType: "car",
+	})
+	if err != nil {
+		t.Fatalf("failed to create object: %v", err)
+	}
+
+	redisCmd := setupTestRedis()
+	qrService := services.NewQRCodeService(
+		repository.NewQRCodeRepository(db),
+		objRepo,
+		redisCmd,
+	)
+
+	// Try to get QR code without generating
+	_, err = qrService.GetQRCode(ctx, owner, obj.ID)
+	if err == nil {
+		t.Errorf("expected error for non-existent QR code")
+	}
 }
