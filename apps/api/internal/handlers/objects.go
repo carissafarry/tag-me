@@ -224,6 +224,32 @@ func (h *ObjectHandler) GenerateQRCode(c *gin.Context) {
 	})
 }
 
+func (h *ObjectHandler) GetQRImage(c *gin.Context) {
+	token := c.Param("token")
+	if token == "" {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse{
+			Code:  "invalid_token",
+			Error: "qr token is required",
+		})
+		return
+	}
+
+	qrImage, err := h.qrService.GenerateQRCodeImage(c.Request.Context(), token)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
+			Code:  "internal_error",
+			Error: "failed to get qr code image",
+			Detail: err.Error(),
+		})
+		return
+	}
+
+	// Return image as base64 in JSON response
+	c.JSON(http.StatusOK, gin.H{
+		"qr_image": qrImage,
+	})
+}
+
 func (h *ObjectHandler) GetQRCode(c *gin.Context) {
 	if h.qrService == nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse{

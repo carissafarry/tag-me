@@ -15,6 +15,7 @@ var (
 	ErrOTPNotFound                = errors.New("otp not found or expired")
 	ErrAccountBlocked             = errors.New("account locked, contact support")
 	ErrAccountDisabled            = errors.New("account disabled")
+	ErrQRCodeNotFound			  = errors.New("qr code not found")
 	ErrQRCodeGenerationInProgress = errors.New("qr code generation already in progress for this object")
 	ErrObjectNotFound             = errors.New("object not found")
 	ErrObjectNotOwned             = errors.New("object not owned by user")
