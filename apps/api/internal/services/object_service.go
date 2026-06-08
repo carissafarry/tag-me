@@ -2,18 +2,12 @@ package services
 
 import (
 	"context"
-	"errors"
 	"time"
 
 	"github.com/carissafarry/tag-me/api/internal/models"
 	"github.com/google/uuid"
 )
 
-var (
-	ErrObjectNotFound     = errors.New("object not found")
-	ErrObjectNotOwned     = errors.New("object not owned by user")
-	ErrConversationActive = errors.New("please resolve conversations before deleting this object")
-)
 
 type ObjectService struct {
 	repo ObjectRepository

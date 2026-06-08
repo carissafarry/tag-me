@@ -7,27 +7,12 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"math/big"
 	"time"
 
 	"github.com/carissafarry/tag-me/api/internal/models"
 	"github.com/carissafarry/tag-me/api/internal/repository"
-)
-
-var (
-	ErrInvalidRequest      = errors.New("invalid request payload")
-	ErrInvalidContact      = errors.New("invalid contact format")
-	ErrInvalidOTP          = errors.New("invalid or expired otp")
-	ErrTooManyAttempts     = errors.New("too many attempts, please try again later")
-	ErrTooManyRequests     = errors.New("too many requests, please try again later")
-	ErrContactRequired     = errors.New("contact is required")
-	ErrContactTypeRequired = errors.New("contact_type is required")
-	ErrOTPRequired         = errors.New("otp is required")
-	ErrOTPNotFound         = errors.New("otp not found or expired")
-	ErrAccountBlocked      = errors.New("account locked, contact support")
-	ErrAccountDisabled     = errors.New("account disabled")
 )
 
 type AuthService struct {
