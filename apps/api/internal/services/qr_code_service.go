@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/carissafarry/tag-me/api/internal/models"
@@ -52,6 +53,12 @@ func (s *QRCodeService) GenerateQRCode(ctx context.Context, ownerID uuid.UUID, o
 	// Check if QR code exists
 	existing, _ := s.qrRepo.FindByObjectID(ctx, ownerID, objectID)
 
+	// Delete old image if exists
+	if existing != nil && existing.QRToken != "" {
+		oldImagePath := fmt.Sprintf("storage/qr_images/%s.png", existing.QRToken)
+		_ = os.Remove(oldImagePath)
+	}
+
 	// Generate QR token
 	token, err := generateQRToken()
 	if err != nil {
@@ -98,6 +105,15 @@ func (s *QRCodeService) GetQRCode(ctx context.Context, ownerID uuid.UUID, object
 }
 
 func (s *QRCodeService) GenerateQRCodeImage(ctx context.Context, qrToken string) (string, error) {
+	// Validate token exists and is active
+	qr, err := s.qrRepo.FindByToken(ctx, qrToken)
+	if err != nil || qr == nil {
+		return "", ErrInvalidQRToken
+	}
+	if !qr.IsActive {
+		return "", ErrInactiveFQRToken
+	}
+
 	qrImageDir := "storage/qr_images"
 	filePath := fmt.Sprintf("%s/%s.png", qrImageDir, qrToken)
 
@@ -105,7 +121,7 @@ func (s *QRCodeService) GenerateQRCodeImage(ctx context.Context, qrToken string)
 	if err != nil {
 		return "", err
 	}
-	
+
 	return qrImage, nil
 }
 
