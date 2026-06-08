@@ -142,6 +142,7 @@ func main() {
 
 	qrcode := v1.Group("/qrcode")
 	qrcode.POST("/generate", objectHandler.GenerateQRCode)
+	qrcode.GET("/image/:token", objectHandler.GetQRImage)
 	qrcode.GET("/:object_id", objectHandler.GetQRCode)
 
 	// Health check

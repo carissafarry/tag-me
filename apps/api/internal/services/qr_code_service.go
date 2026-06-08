@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"time"
 
@@ -39,12 +38,6 @@ func (s *QRCodeService) GenerateQRCode(ctx context.Context, ownerID uuid.UUID, o
 		return nil, ErrObjectNotFound
 	}
 
-	// Check for existing QR code
-	existingQR, err := s.qrRepo.FindByObjectID(ctx, ownerID, objectID)
-	if err == nil && existingQR != nil {
-		return existingQR, nil
-	}
-
 	// Check for generation in progress (Redis lock)
 	lockKey := fmt.Sprintf("qr_gen:%s:%s", ownerID.String(), objectID.String())
 	lockResult, err := s.redisCmd.SetNX(ctx, lockKey, "1", s.genTTL).Result()
@@ -56,19 +49,29 @@ func (s *QRCodeService) GenerateQRCode(ctx context.Context, ownerID uuid.UUID, o
 	}
 	defer s.redisCmd.Del(ctx, lockKey)
 
+	// Check if QR code exists
+	existing, _ := s.qrRepo.FindByObjectID(ctx, ownerID, objectID)
+
 	// Generate QR token
 	token, err := generateQRToken()
 	if err != nil {
 		return nil, fmt.Errorf("generate token: %w", err)
 	}
 
-	// Create QR code
-	qr, err := s.qrRepo.Create(ctx, ownerID, objectID, token)
-	if err != nil {
-		return nil, fmt.Errorf("create qr code: %w", err)
+	var qr *models.QRCode
+	if existing != nil {
+		// Update existing QR code token
+		qr, err = s.qrRepo.UpdateToken(ctx, objectID, token)
+		if err != nil {
+			return nil, fmt.Errorf("update qr code: %w", err)
+		}
+	} else {
+		// Create new QR code
+		qr, err = s.qrRepo.CreateToken(ctx, ownerID, objectID, token)
+		if err != nil {
+			return nil, fmt.Errorf("create qr code: %w", err)
+		}
 	}
-
-	// TODO: Add QR code image generation (e.g. generate image, upload to storage, etc.)
 
 	return qr, nil
 }
@@ -88,10 +91,22 @@ func (s *QRCodeService) GetQRCode(ctx context.Context, ownerID uuid.UUID, object
 		return nil, err
 	}
 	if qr == nil {
-		return nil, errors.New("qr code not found")
+		return nil, ErrQRCodeNotFound
 	}
 
 	return qr, nil
+}
+
+func (s *QRCodeService) GenerateQRCodeImage(ctx context.Context, qrToken string) (string, error) {
+	qrImageDir := "storage/qr_images"
+	filePath := fmt.Sprintf("%s/%s.png", qrImageDir, qrToken)
+
+	qrImage, err := s.qrRepo.GenerateQRImage(ctx, qrToken, filePath)
+	if err != nil {
+		return "", err
+	}
+	
+	return qrImage, nil
 }
 
 func generateQRToken() (string, error) {

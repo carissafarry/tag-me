@@ -43,9 +43,11 @@ type MessageService struct {
 }
 
 type QRCodeRepository interface {
-	Create(ctx context.Context, ownerID uuid.UUID, objectID uuid.UUID, qrToken string) (*models.QRCode, error)
-	FindByToken(ctx context.Context, qrToken string) (*models.QRCode, error)
 	FindByObjectID(ctx context.Context, ownerID uuid.UUID, objectID uuid.UUID) (*models.QRCode, error)
+	FindByToken(ctx context.Context, qrToken string) (*models.QRCode, error)
+	CreateToken(ctx context.Context, ownerID uuid.UUID, objectID uuid.UUID, qrToken string) (*models.QRCode, error)
+	UpdateToken(ctx context.Context, objectID uuid.UUID, newToken string) (*models.QRCode, error)
+	GenerateQRImage(ctx context.Context, data string, filePath string) (string, error)
 }
 
 type ConversationRepository interface {
